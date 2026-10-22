@@ -32,10 +32,10 @@ export default function ScoreReveal({ entries, revealKey, playerId, final = fals
         timer.current = window.setTimeout(() => {
           try { sessionStorage.setItem(storageKey,'done') } catch { /* Optional. */ }
           onComplete()
-        }, 650)
-      } else timer.current = window.setTimeout(advance, 1100)
+        }, 1200)
+      } else timer.current = window.setTimeout(advance, 2000)
     }
-    timer.current = window.setTimeout(advance, 500)
+    timer.current = window.setTimeout(advance, 900)
     return () => window.clearTimeout(timer.current)
   }, [storageKey, groups.length, onComplete])
 
