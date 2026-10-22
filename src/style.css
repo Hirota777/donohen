@@ -36,3 +36,62 @@ body{background:radial-gradient(ellipse at 8% 8%,#e2f5ff 0,transparent 36%),radi
 .notice{background:#fff6df!important;color:#997128!important}.status{color:#c63867!important}
 footer{border-color:#e6e3f0}footer b{letter-spacing:0;color:#2d3d69;font-size:14px}
 @media(max-width:760px){.hero-logo{font-size:clamp(54px,13vw,90px)}.hero .tagline{font-size:25px}.brand{font-size:18px}.hero h1{letter-spacing:-1px}}
+
+/* Quiet interface: show the game, keep optional explanations tucked away. */
+.top{height:72px;border-bottom:0}
+.landing{padding:40px 0 64px;gap:8%}
+.landing .panel>h2{margin:0 0 22px}
+.hero>p{max-width:420px;color:#606a7d}
+.hero .spectrum{margin-top:32px;margin-bottom:12px}
+.panel p{color:#606a7d}
+.panel label{color:#4c5870;font-size:12px}
+.or{margin:24px 0 18px}
+.or+label{margin-top:0}
+.help{border-top:1px solid #ece8f1;margin-top:24px;padding-top:16px;font-size:12px;color:#657087}
+.help summary{cursor:pointer;width:fit-content;line-height:1.8}
+.help p{margin:10px 0 0;font-size:12px;line-height:1.9}
+.quiet{text-align:center;font-size:12px!important;margin:16px 0 0;color:#68738a!important}
+.gamehead{gap:16px;margin-bottom:18px}
+.gamehead h1{margin:8px 0;font-size:30px}
+.gamehead .eyebrow{font-size:11px;letter-spacing:.04em;color:#737b8d}
+.gamepanel>h2:first-child{margin-top:0}
+.invite{padding-bottom:24px;border-bottom:1px solid #ece8f1;margin-bottom:24px}
+.invite>span{font-size:12px;color:#68738a}
+.invite>div{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:8px}
+.invite b{font-size:36px;letter-spacing:.13em;color:#ed628a;line-height:1.3}
+.invite p{font-size:12px;margin:10px 0 0}
+.gamepanel .member-heading{font-size:15px;margin:0 0 12px}
+.players-strip{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:18px}
+.players-strip .chip{display:flex;gap:9px;align-items:center;font-size:11px;padding:7px 10px;color:#56617a}
+.players-strip .chip b{font-weight:600;color:#1e315a}
+.prompt{padding:22px 24px;margin-bottom:18px}
+.prompt .poles{margin:0;align-items:center}
+.poles>span{display:flex;flex-direction:column;gap:6px;min-width:0;overflow-wrap:anywhere}
+.poles>span:last-child{text-align:right}
+.poles small{font-size:11px;font-weight:600;color:#747b8b}
+.secret>span{display:block;color:#69758b;font-size:12px}
+.secret>strong{display:block;font-size:48px;margin-top:8px;line-height:1.3}
+.secret strong small,.submitted-guess small{font-size:13px;color:#737d90;font-weight:500}
+.secret .track{margin-bottom:10px}
+.clue-text{font-size:25px!important;overflow-wrap:anywhere}
+.submitted-guess{font-size:36px;font-weight:800;margin-top:10px}
+.waiting h3{font-size:14px;margin:0}
+.gamepanel .result-clue{overflow-wrap:anywhere;font-size:15px;color:#1e315a}
+.hint-score{color:#58647c}
+.scoreline{align-items:center;gap:14px}
+.scoreline>span{min-width:0;overflow-wrap:anywhere}
+.scoreline>b{flex-shrink:0}
+.scoreline span small{color:#68738a}
+.final-results>h2{margin-top:0}
+.connection-error{font-size:12px;color:#8c5e28;background:#fff3d9;border-radius:10px;padding:12px 16px;margin:0 auto;width:100%;max-width:760px}
+.restore-placeholder{flex:1;display:grid;grid-template-columns:1fr 1fr;align-content:center;gap:8%;padding:40px 0 64px}
+.skeleton{height:310px;border-radius:24px;background:linear-gradient(120deg,#f4eff5,#faf7fa);opacity:.65}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+button:disabled{cursor:default;transform:none}
+button:focus-visible,summary:focus-visible{outline:3px solid #7256cb;outline-offset:4px}
+.range{appearance:none;-webkit-appearance:none;height:8px;border-radius:12px;background:linear-gradient(90deg,#2eb6ff,#30d1b4,#6bd56b,#ffcb3e,#ff9445,#ff668e);margin:16px 0}
+.range::-webkit-slider-thumb{appearance:none;-webkit-appearance:none;width:25px;height:25px;border:4px solid #26335b;border-radius:50%;background:white;box-shadow:0 2px 6px #26335b30}
+.range::-moz-range-thumb{width:17px;height:17px;border:4px solid #26335b;border-radius:50%;background:white;box-shadow:0 2px 6px #26335b30}
+.range:focus-visible{outline:3px solid #7256cb;outline-offset:7px}
+@media(max-width:760px){.top{height:62px}.landing{padding:18px 0 40px;gap:36px}.hero .tagline{margin:16px 0 12px}.hero>p{font-size:13px}.hero .spectrum{max-width:290px;margin-top:22px}.gamehead h1{font-size:25px}.gamehead .textbtn{font-size:11px}.invite b{font-size:32px}.prompt{padding:18px}.restore-placeholder{grid-template-columns:1fr}.skeleton{height:220px}.skeleton+ .skeleton{display:none}.clue-text{font-size:21px!important}}
+
