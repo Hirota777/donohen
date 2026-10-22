@@ -151,7 +151,7 @@ export default function App() {
 
   const joinRoom = async () => {
     if (!db) { setStatus('今は遊べません。時間をおいて試してください。'); return }
-    const room = joinCode.trim().toUpperCase()
+    const room = joinCode.normalize('NFKC').trim().toUpperCase()
     const n = name.trim()
     if (!n) { setStatus('ニックネームを入力してください'); return }
     if (!room) { setStatus('ルームコードを入力してください'); return }
@@ -244,7 +244,7 @@ export default function App() {
         <button className="primary full" disabled={busy||!name.trim()} onClick={createRoom}>部屋を作る <ArrowRight size={17}/></button>
         <div className="or">または</div>
         <label htmlFor="room-code">ルームコード</label>
-        <div className="joinrow"><input id="room-code" value={joinCode} onChange={e=>setJoinCode(e.target.value.toUpperCase())} maxLength={8} placeholder="ABCD"/><button className="secondary" disabled={busy||!name.trim()||!joinCode.trim()} onClick={joinRoom}>参加する</button></div>
+        <div className="joinrow"><input id="room-code" className="room-code-input" value={joinCode} onChange={e=>setJoinCode(e.target.value)} inputMode="text" autoCapitalize="characters" autoCorrect="off" autoComplete="off" spellCheck={false} maxLength={8} placeholder="ABCD"/><button className="secondary" disabled={busy||!name.trim()||!joinCode.trim()} onClick={joinRoom}>参加する</button></div>
         {status&&<p className="status" role="alert">{status}</p>}
         <details className="help"><summary>遊び方</summary><p>ヒント役だけが正解の数字を見て、言葉でヒントを出します。ほかの人は0〜100で予想。正解に近いほど高得点！ ヒント役は1人1〜3回。合計点で競います。</p></details>
       </div>
