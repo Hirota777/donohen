@@ -1,7 +1,7 @@
 import { randomPrompt } from './prompts'
 import ScoreReveal from './ScoreReveal'
 import { useCallback, useEffect, useState } from 'react'
-import { createClient, SupabaseClient } from '@supabase/supabase-js'
+import { checkedRpc, db, ensureIdentity, errorMessage, GameApiError, makeRoomCode } from './session'
 import { ArrowRight, Copy, Radio, Users } from 'lucide-react'
 
 type Prompt = { left: string; right: string }
@@ -13,6 +13,7 @@ type PublicGame = {
   hostId: string
   players: Player[]
   round: number
+  securityVersion?: number
   totalRounds?: number
   roundsPerPlayer?: number
   rulesVersion?: number
@@ -29,15 +30,10 @@ type PublicGame = {
   updatedAt: string
 }
 type RpcResult = { state: PublicGame; target: number | null; ownGuess: number | null }
-const url = import.meta.env.VITE_SUPABASE_URL as string | undefined
-const key = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY) as string | undefined
-const db: SupabaseClient | null = url && key ? createClient(url, key) : null
-const makeCode = () => Math.random().toString(36).slice(2, 6).toUpperCase()
-const makeId = () => crypto.randomUUID()
-const SESSION_KEY = 'donohen-session-v1'
+const SESSION_KEY = 'donohen-session-v2'
 type SavedSession = { room: string; playerId: string; name: string }
-const saveSession = (data: SavedSession) => localStorage.setItem(SESSION_KEY, JSON.stringify(data))
-const clearSession = () => localStorage.removeItem(SESSION_KEY)
+const saveSession = (data: SavedSession) => { try { localStorage.setItem(SESSION_KEY, JSON.stringify(data)) } catch { /* Play without restoration when storage is blocked. */ } }
+const clearSession = () => { try { localStorage.removeItem(SESSION_KEY); localStorage.removeItem('donohen-session-v1') } catch { /* Storage may be blocked. */ } }
 
 export default function App() {
   const [name, setName] = useState('')
@@ -77,27 +73,29 @@ export default function App() {
   }, [])
 
   const rpc = useCallback(async (name: string, args: Record<string, unknown>) => {
-    if (!db) throw new Error('今は遊べません。時間をおいて試してください。')
-    const { data, error } = await db.rpc(name, args)
-    if (error) throw error
-    return data as RpcResult
+    return await checkedRpc(name,args) as RpcResult
   }, [])
 
   // Restore the SAME player ID: answers, points, and host privileges survive a reload.
   useEffect(() => {
     let active = true
     const restore = async () => {
-      const saved = localStorage.getItem(SESSION_KEY)
-      if (!saved || !db) { if (active) setRestoring(false); return }
       try {
+        const saved = localStorage.getItem(SESSION_KEY)
+        if (!saved || !db) return
         const session = JSON.parse(saved) as SavedSession
         if (!session.room || !session.playerId || !session.name) throw new Error('Invalid session')
+        const identity = await ensureIdentity()
+        if (identity !== session.playerId) throw new GameApiError('IDENTITY_MISMATCH','前の部屋には戻れません。参加し直してください。')
         const result = await rpc('spectrum_get_room', { p_room_code: session.room, p_player_id: session.playerId })
         if (!active) return
         setName(session.name); setPlayerId(session.playerId); applyRpc(result)
         setConnectionLost(false); setStatus('')
-      } catch {
-        if (active) { clearSession(); setStatus('前の部屋に戻れませんでした。もう一度参加してください。') }
+      } catch (error) {
+        if (active) {
+          if (!(error instanceof GameApiError) || ['IDENTITY_MISMATCH','ROOM_UNAVAILABLE'].includes(error.code)) clearSession()
+          setStatus(errorMessage(error,'前の部屋に戻れませんでした。もう一度参加してください。'))
+        }
       } finally { if (active) setRestoring(false) }
     }
     void restore()
@@ -115,8 +113,13 @@ export default function App() {
           applyRpc(result)
           setConnectionLost(false)
         }
-      } catch {
-        if (alive) setConnectionLost(true)
+      } catch (error) {
+        if (alive) {
+          if (error instanceof GameApiError && ['ROOM_UNAVAILABLE','IDENTITY_MISMATCH'].includes(error.code)) {
+            clearSession(); setGame(null); setPlayerId(''); setTarget(null); setOwnGuess(null)
+            setStatus(error.message)
+          } else setConnectionLost(true)
+        }
       }
     }
     void tick()
@@ -128,24 +131,27 @@ export default function App() {
     if (!db) { setStatus('今は遊べません。時間をおいて試してください。'); return }
     const n = name.trim()
     if (!n) { setStatus('ニックネームを入力してください'); return }
-    const id = makeId()
     setBusy(true)
     try {
+      const id = await ensureIdentity()
       let result: RpcResult | null = null
       let lastError: unknown
       for (let attempt = 0; attempt < 4; attempt++) {
         try {
           result = await rpc('spectrum_create_room', {
-            p_room_code: makeCode(), p_player_id: id, p_player_name: n,
+            p_room_code: makeRoomCode(), p_player_id: id, p_player_name: n,
             p_prompt: randomPrompt(), p_target: Math.floor(15 + Math.random() * 71)
           })
           break
-        } catch (e) { lastError = e }
+        } catch (e) {
+          if (!(e instanceof GameApiError) || e.code !== 'ROOM_CODE_COLLISION') throw e
+          lastError = e
+        }
       }
       if (!result) throw lastError
       saveSession({room: result.state.room, playerId:id, name:n}); setPlayerId(id); setName(n); applyRpc(result); setStatus('')
     } catch (e) {
-      setStatus('部屋を作れませんでした。もう一度試してください。')
+      setStatus(errorMessage(e,'部屋を作れませんでした。もう一度試してください。'))
     } finally { setBusy(false) }
   }
 
@@ -155,33 +161,36 @@ export default function App() {
     const n = name.trim()
     if (!n) { setStatus('ニックネームを入力してください'); return }
     if (!room) { setStatus('ルームコードを入力してください'); return }
-    const id = makeId()
+    if (!/^[A-Z2-9]{8}$/.test(room)) { setStatus('8文字のルームコードを入力してください'); return }
     setBusy(true)
     try {
+      const id = await ensureIdentity()
       const result = await rpc('spectrum_join_room', { p_room_code: room, p_player_id: id, p_player_name: n })
       saveSession({room: result.state.room, playerId:id, name:n}); setPlayerId(id); setName(n); applyRpc(result); setStatus('')
     } catch (e) {
-      setStatus('参加できませんでした。コードと、ゲームが始まっていないかを確認してください。')
+      setStatus(errorMessage(e,'参加できませんでした。コードと、ゲームが始まっていないかを確認してください。'))
     } finally { setBusy(false) }
   }
 
   const act = async (action: string, payload: Record<string, unknown> = {}) => {
-    if (!game || !playerId) return
+    if (!game || !playerId) return false
     setBusy(true)
     try {
       const result = await rpc('spectrum_game_action', {
         p_room_code: game.room, p_player_id: playerId, p_action: action, p_payload: payload
       })
       applyRpc(result); setStatus('')
+      return true
     } catch (e) {
-      setStatus('うまくいきませんでした。もう一度試してください。')
+      setStatus(errorMessage(e,'うまくいきませんでした。もう一度試してください。'))
+      return false
     } finally { setBusy(false) }
   }
 
   const sendClue = () => {
     if (!clueDraft.trim()) { setStatus('ヒントを入力してください'); return }
     if (!clueGiver) { setStatus('このラウンドのヒント役ではありません'); return }
-    void act('clue', { clue: clueDraft.trim() }); setClueDraft('')
+    void act('clue', { clue: clueDraft.trim() }).then(success => { if (success) setClueDraft('') })
   }
   const submitGuess = () => {
     if (!game || clueGiver || hasAnswered) return
@@ -224,7 +233,7 @@ export default function App() {
       clearSession(); setGame(null); setPlayerId(''); setTarget(null); setOwnGuess(null)
       setStatus(''); setConnectionLost(false)
     } catch (e) {
-      setStatus('退出できませんでした。もう一度試してください。')
+      setStatus(errorMessage(e,'退出できませんでした。もう一度試してください。'))
     } finally { setBusy(false) }
   }
 
@@ -244,7 +253,7 @@ export default function App() {
         <button className="primary full" disabled={busy||!name.trim()} onClick={createRoom}>部屋を作る <ArrowRight size={17}/></button>
         <div className="or">または</div>
         <label htmlFor="room-code">ルームコード</label>
-        <div className="joinrow"><input id="room-code" className="room-code-input" value={joinCode} onChange={e=>setJoinCode(e.target.value)} inputMode="text" autoCapitalize="characters" autoCorrect="off" autoComplete="off" spellCheck={false} maxLength={8} placeholder="ABCD"/><button className="secondary" disabled={busy||!name.trim()||!joinCode.trim()} onClick={joinRoom}>参加する</button></div>
+        <div className="joinrow"><input id="room-code" className="room-code-input" value={joinCode} onChange={e=>setJoinCode(e.target.value)} inputMode="text" autoCapitalize="characters" autoCorrect="off" autoComplete="off" spellCheck={false} maxLength={8} placeholder="例：ABCD2345"/><button className="secondary" disabled={busy||!name.trim()||!joinCode.trim()} onClick={joinRoom}>参加する</button></div>
         {status&&<p className="status" role="alert">{status}</p>}
         <details className="help"><summary>遊び方</summary><p>ヒント役だけが正解の数字を見て、言葉でヒントを出します。ほかの人は0〜100で予想。正解に近いほど高得点！ ヒント役は1人1〜3回。合計点で競います。</p></details>
       </div>

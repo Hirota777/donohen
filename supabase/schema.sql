@@ -1,3 +1,6 @@
+-- ドノヘン？ v6: anonymous Auth, private room data, rate limits and room expiry.
+-- Existing legacy rooms are not trusted or claimed by their public IDs. Start a new room.
+BEGIN;
 -- Spectrum Party online backend
 -- Run the entire file in Supabase Dashboard -> SQL Editor.
 -- The public game state contains no unrevealed target. Targets are kept in a table
@@ -11,10 +14,8 @@ create table if not exists public.spectrum_rooms (
 );
 alter table public.spectrum_rooms enable row level security;
 revoke all on public.spectrum_rooms from anon, authenticated;
-grant select on public.spectrum_rooms to anon, authenticated;
 drop policy if exists "public can read spectrum rooms" on public.spectrum_rooms;
-create policy "public can read spectrum rooms" on public.spectrum_rooms
-  for select to anon, authenticated using (true);
+
 
 create table if not exists public.spectrum_room_secrets (
   room_code text primary key references public.spectrum_rooms(room_code) on delete cascade,
@@ -39,7 +40,100 @@ alter table public.spectrum_player_guesses add constraint spectrum_player_guesse
 alter table public.spectrum_player_guesses enable row level security;
 revoke all on public.spectrum_player_guesses from anon, authenticated;
 
-create or replace function public.spectrum_create_room(
+
+-- The public API is restricted to authenticated Supabase users (including anonymous Auth).
+alter table public.spectrum_rooms add column if not exists security_version integer not null default 1;
+alter table public.spectrum_rooms add column if not exists creator_id uuid;
+alter table public.spectrum_rooms add column if not exists expires_at timestamptz not null default (now() + interval '2 hours');
+create index if not exists spectrum_rooms_expiry_idx on public.spectrum_rooms(expires_at);
+
+create table if not exists public.spectrum_memberships (
+  room_code text not null references public.spectrum_rooms(room_code) on delete cascade,
+  user_id uuid not null,
+  primary key (room_code,user_id)
+);
+create index if not exists spectrum_memberships_user_idx on public.spectrum_memberships(user_id);
+alter table public.spectrum_memberships enable row level security;
+
+create table if not exists public.spectrum_request_limits (
+  subject text not null,
+  bucket text not null,
+  window_start timestamptz not null,
+  attempts integer not null default 0,
+  primary key (subject,bucket)
+);
+alter table public.spectrum_request_limits enable row level security;
+
+-- Private, atomic limiter. Denials are returned by wrappers, not raised, so failed
+-- guesses/joins also consume their request budget after the RPC transaction commits.
+create or replace function public.spectrum_take_limit(p_subject text,p_bucket text,p_max integer,p_seconds integer)
+returns boolean language plpgsql security definer set search_path = pg_catalog,public
+as $$
+declare count_now integer; at_time timestamptz := clock_timestamp();
+begin
+  insert into public.spectrum_request_limits as limits(subject,bucket,window_start,attempts)
+  values(p_subject,p_bucket,at_time,1)
+  on conflict(subject,bucket) do update set
+    window_start=case when limits.window_start <= at_time-make_interval(secs=>p_seconds) then at_time else limits.window_start end,
+    attempts=case when limits.window_start <= at_time-make_interval(secs=>p_seconds) then 1 else least(limits.attempts+1,p_max+1) end
+  returning attempts into count_now;
+  return count_now <= p_max;
+end $$;
+
+create or replace function public.spectrum_cleanup_expired()
+returns integer language plpgsql security definer set search_path = pg_catalog,public
+as $$
+declare removed integer;
+begin
+  delete from public.spectrum_rooms where expires_at <= clock_timestamp();
+  get diagnostics removed = row_count;
+  delete from public.spectrum_request_limits where window_start < clock_timestamp()-interval '1 day';
+  return removed;
+end $$;
+
+create or replace function public.spectrum_check_identity(p_player_id text)
+returns uuid language plpgsql stable security definer set search_path = pg_catalog,public
+as $$
+declare caller uuid := auth.uid();
+begin
+  if caller is null or p_player_id is distinct from caller::text then
+    raise exception using errcode='42501',message='本人を確認できません。画面を再読み込みしてください。';
+  end if;
+  return caller;
+end $$;
+
+create or replace function public.spectrum_check_member(p_room_code text,p_user_id uuid)
+returns void language plpgsql security definer set search_path = pg_catalog,public
+as $$
+begin
+  if p_room_code is null or p_room_code !~ '^[A-Z2-9]{8}$' then
+    raise exception using errcode='42501',message='この部屋には入れません。コードを確認してください。';
+  end if;
+  if not exists(
+    select 1 from public.spectrum_rooms r join public.spectrum_memberships m using(room_code)
+    where r.room_code=p_room_code and m.user_id=p_user_id
+      and r.security_version=6 and r.expires_at>clock_timestamp()
+      and r.created_at>clock_timestamp()-interval '24 hours'
+  ) then
+    raise exception using errcode='42501',message='この部屋には入れません。コードを確認して参加し直してください。';
+  end if;
+end $$;
+
+create or replace function public.spectrum_valid_prompt(p_prompt jsonb)
+returns boolean language sql immutable set search_path = pg_catalog,public
+as $$
+  select coalesce(jsonb_typeof(p_prompt)='object'
+    and jsonb_typeof(p_prompt->'left')='string' and jsonb_typeof(p_prompt->'right')='string'
+    and length(trim(p_prompt->>'left')) between 1 and 50
+    and length(trim(p_prompt->>'right')) between 1 and 50
+    and octet_length(p_prompt::text)<=1000,false)
+$$;
+
+create or replace function public.spectrum_protocol()
+returns jsonb language sql stable security definer set search_path = pg_catalog,public
+as $$ select jsonb_build_object('version',6,'authRequired',true) $$;
+
+create or replace function public.spectrum_v6_create_impl(
   p_room_code text, p_player_id text, p_player_name text, p_prompt jsonb, p_target integer
 ) returns jsonb
 language plpgsql security definer set search_path = public, pg_temp
@@ -54,15 +148,15 @@ begin
   s := jsonb_build_object(
     'room', p_room_code, 'hostId', p_player_id,
     'players', jsonb_build_array(jsonb_build_object('id',p_player_id,'name',trim(p_player_name),'score',0)),
-    'rulesVersion',2,'roundsPerPlayer',1,'round',1,'cluePlayerId',p_player_id,'prompt',p_prompt,'promptHistory','[]'::jsonb,'clue','','phase','lobby',
+    'securityVersion',6,'rulesVersion',2,'roundsPerPlayer',1,'round',1,'cluePlayerId',p_player_id,'prompt',p_prompt,'promptHistory','[]'::jsonb,'clue','','phase','lobby',
     'answeredPlayerIds','[]'::jsonb,'lastRoundResults','[]'::jsonb,'targetRevealed',null,'updatedAt',now()
   );
-  insert into public.spectrum_rooms(room_code,public_state) values(p_room_code,s);
+  insert into public.spectrum_rooms(room_code,public_state,security_version,creator_id,expires_at) values(p_room_code,s,6,auth.uid(),now()+interval '2 hours');
   insert into public.spectrum_room_secrets(room_code,target,target_player_id) values(p_room_code,server_target,p_player_id);
   return jsonb_build_object('state',s,'target',server_target,'ownGuess',null);
 end $$;
 
-create or replace function public.spectrum_join_room(
+create or replace function public.spectrum_v6_join_impl(
   p_room_code text, p_player_id text, p_player_name text
 ) returns jsonb
 language plpgsql security definer set search_path = public, pg_temp
@@ -86,7 +180,7 @@ begin
   return jsonb_build_object('state',s,'target',result_target);
 end $$;
 
-create or replace function public.spectrum_get_room(
+create or replace function public.spectrum_v6_get_impl(
   p_room_code text, p_player_id text
 ) returns jsonb
 language plpgsql security definer set search_path = public, pg_temp
@@ -109,7 +203,7 @@ begin
   return jsonb_build_object('state',s,'target',t,'ownGuess',own_answer);
 end $$;
 
-create or replace function public.spectrum_game_action(
+create or replace function public.spectrum_v6_action_impl(
   p_room_code text, p_player_id text, p_action text, p_payload jsonb default '{}'::jsonb
 ) returns jsonb
 language plpgsql security definer set search_path = public, pg_temp
@@ -293,26 +387,7 @@ begin
   return jsonb_build_object('state',s,'target',t,'ownGuess',own_answer);
 end $$;
 
-revoke all on function public.spectrum_create_room(text,text,text,jsonb,integer) from public;
-revoke all on function public.spectrum_join_room(text,text,text) from public;
-revoke all on function public.spectrum_get_room(text,text) from public;
-revoke all on function public.spectrum_game_action(text,text,text,jsonb) from public;
-grant execute on function public.spectrum_create_room(text,text,text,jsonb,integer) to anon, authenticated;
-grant execute on function public.spectrum_join_room(text,text,text) to anon, authenticated;
-grant execute on function public.spectrum_get_room(text,text) to anon, authenticated;
-grant execute on function public.spectrum_game_action(text,text,text,jsonb) to anon, authenticated;
-
--- Realtime sends public_state updates to all clients; no secret target is stored in this table.
-do $$ begin
-  alter publication supabase_realtime add table public.spectrum_rooms;
-exception when duplicate_object then null;
-when undefined_object then null;
-end $$;
-
-
--- Explicit exit is different from closing the tab. Closing/reloading preserves membership.
--- The room row is locked, so exit and guesses cannot race.
-create or replace function public.spectrum_leave_room(p_room_code text, p_player_id text)
+create or replace function public.spectrum_v6_leave_impl(p_room_code text, p_player_id text)
 returns jsonb language plpgsql security definer set search_path = public, pg_temp
 as $$
 declare
@@ -397,8 +472,179 @@ begin
   update public.spectrum_rooms set public_state=s,updated_at=now() where room_code=room;
   return jsonb_build_object('left',true,'closed',false);
 end $$;
-revoke all on function public.spectrum_leave_room(text,text) from public;
-grant execute on function public.spectrum_leave_room(text,text) to anon, authenticated;
+create or replace function public.spectrum_create_room(
+ p_room_code text,p_player_id text,p_player_name text,p_prompt jsonb,p_target integer
+) returns jsonb language plpgsql security definer set search_path = pg_catalog,public
+as $$
+declare caller uuid; result jsonb;
+begin
+  caller := public.spectrum_check_identity(p_player_id);
+  if not public.spectrum_take_limit(caller::text,'create',5,600)
+     or not public.spectrum_take_limit('global','create',40,60) then
+    return jsonb_build_object('error',jsonb_build_object('code','RATE_LIMIT','message','部屋を作る回数が多くなっています。少し待って試してください。'));
+  end if;
+  perform public.spectrum_cleanup_expired();
+  begin
+    if p_room_code is null or p_room_code !~ '^[A-Z2-9]{8}$'
+      or p_player_name is null or length(trim(p_player_name)) not between 1 and 18
+      or not public.spectrum_valid_prompt(p_prompt) then
+      raise exception '入力内容を確認してください。';
+    end if;
+    -- Global capacity limits bound room growth even across newly created identities.
+    perform pg_advisory_xact_lock(hashtextextended(caller::text,0));
+    perform pg_advisory_xact_lock(604063);
+    if (select count(*) from public.spectrum_rooms where security_version=6 and expires_at>clock_timestamp())>=500 then
+      raise exception '部屋が混み合っています。時間をおいて試してください。';
+    end if;
+    if (select count(*) from public.spectrum_memberships m join public.spectrum_rooms r using(room_code)
+        where m.user_id=caller and r.expires_at>clock_timestamp())>=3 then
+      raise exception '参加中の部屋を退出してから試してください。';
+    end if;
+    result := public.spectrum_v6_create_impl(p_room_code,p_player_id,p_player_name,p_prompt,p_target);
+    insert into public.spectrum_memberships(room_code,user_id) values(p_room_code,caller);
+    return result;
+  exception when unique_violation then
+    return jsonb_build_object('error',jsonb_build_object('code','ROOM_CODE_COLLISION','message','部屋を作り直してください。'));
+  when others then
+    return jsonb_build_object('error',jsonb_build_object('code','CREATE_FAILED','message',case
+      when sqlstate='P0001' then sqlerrm else '部屋を作れませんでした。もう一度試してください。' end));
+  end;
+end $$;
 
--- Mark existing rooms as supporting configurable matches. Legacy active matches keep five rounds.
-update public.spectrum_rooms set public_state = public_state || jsonb_build_object('rulesVersion',2,'roundsPerPlayer',coalesce((public_state->>'roundsPerPlayer')::integer,1));
+create or replace function public.spectrum_join_room(p_room_code text,p_player_id text,p_player_name text)
+returns jsonb language plpgsql security definer set search_path = pg_catalog,public
+as $$
+declare caller uuid; room text := upper(trim(p_room_code)); result jsonb;
+begin
+  caller := public.spectrum_check_identity(p_player_id);
+  if not public.spectrum_take_limit(caller::text,'join',10,60)
+     or not public.spectrum_take_limit('global','join',300,60) then
+    return jsonb_build_object('error',jsonb_build_object('code','RATE_LIMIT','message','参加を試す回数が多くなっています。少し待って試してください。'));
+  end if;
+  perform public.spectrum_cleanup_expired();
+  begin
+    if room is null or room !~ '^[A-Z2-9]{8}$' or p_player_name is null
+       or length(trim(p_player_name)) not between 1 and 18 then raise exception '入力内容を確認してください。'; end if;
+    -- Serialize membership changes for this identity to keep the 3-room quota atomic.
+    perform pg_advisory_xact_lock(hashtextextended(caller::text,0));
+    perform 1 from public.spectrum_rooms where room_code=room and security_version=6
+      and expires_at>clock_timestamp() and created_at>clock_timestamp()-interval '24 hours' for update;
+    if not found then raise exception 'この部屋には入れません。コードを確認してください。'; end if;
+    if exists(select 1 from public.spectrum_memberships where room_code=room and user_id=caller) then
+      return public.spectrum_v6_get_impl(room,p_player_id);
+    end if;
+    if (select count(*) from public.spectrum_memberships m join public.spectrum_rooms r using(room_code)
+        where m.user_id=caller and r.expires_at>clock_timestamp())>=3 then
+      raise exception '参加中の部屋を退出してから試してください。';
+    end if;
+    result := public.spectrum_v6_join_impl(room,p_player_id,p_player_name);
+    insert into public.spectrum_memberships(room_code,user_id) values(room,caller);
+    return result;
+  exception when others then
+    return jsonb_build_object('error',jsonb_build_object('code','JOIN_FAILED','message',case
+      when sqlstate='P0001' then sqlerrm else '参加できませんでした。もう一度試してください。' end));
+  end;
+end $$;
+
+create or replace function public.spectrum_get_room(p_room_code text,p_player_id text)
+returns jsonb language plpgsql security definer set search_path = pg_catalog,public
+as $$
+declare caller uuid; room text := upper(trim(p_room_code));
+begin
+  caller := public.spectrum_check_identity(p_player_id);
+  if not public.spectrum_take_limit(caller::text,'read',180,60) then
+    return jsonb_build_object('error',jsonb_build_object('code','RATE_LIMIT','message','少し待ってから画面を開き直してください。'));
+  end if;
+  begin
+    perform public.spectrum_check_member(room,caller);
+    -- Touch at most once per ten minutes, never on every poll. Finished rooms expire in 30m.
+    update public.spectrum_rooms set expires_at=least(created_at+interval '24 hours',clock_timestamp()+interval '2 hours')
+      where room_code=room and public_state->>'phase'<>'finished'
+        and expires_at<clock_timestamp()+interval '110 minutes';
+    return public.spectrum_v6_get_impl(room,p_player_id);
+  exception when insufficient_privilege then
+    return jsonb_build_object('error',jsonb_build_object('code','ROOM_UNAVAILABLE','message','この部屋には戻れません。参加し直してください。'));
+  end;
+end $$;
+
+create or replace function public.spectrum_game_action(
+ p_room_code text,p_player_id text,p_action text,p_payload jsonb default '{}'::jsonb
+) returns jsonb language plpgsql security definer set search_path = pg_catalog,public
+as $$
+declare caller uuid; room text := upper(trim(p_room_code)); result jsonb;
+begin
+  caller := public.spectrum_check_identity(p_player_id);
+  if not public.spectrum_take_limit(caller::text,'action',60,60) then
+    return jsonb_build_object('error',jsonb_build_object('code','RATE_LIMIT','message','操作が続いています。少し待って試してください。'));
+  end if;
+  begin
+    perform public.spectrum_check_member(room,caller);
+    if p_action is null or p_action not in ('settings','start','clue','guess','reveal','restart','next_round')
+      or p_payload is null or jsonb_typeof(p_payload)<>'object' or octet_length(p_payload::text)>2000 then
+      raise exception '入力内容を確認してください。';
+    end if;
+    if p_action in ('start','restart','next_round') and not public.spectrum_valid_prompt(p_payload->'prompt') then
+      raise exception 'お題の形式が正しくありません。画面を再読み込みしてください。';
+    end if;
+    if p_action='clue' and (jsonb_typeof(p_payload->'clue') is distinct from 'string'
+      or length(trim(p_payload->>'clue')) not between 1 and 100) then
+      raise exception 'ヒントは1〜100文字で入力してください。';
+    end if;
+    result := public.spectrum_v6_action_impl(room,p_player_id,p_action,p_payload);
+    update public.spectrum_rooms set expires_at=least(created_at+interval '24 hours',clock_timestamp()+case
+      when result->'state'->>'phase'='finished' then interval '30 minutes' else interval '2 hours' end)
+      where room_code=room;
+    return result;
+  exception when others then
+    return jsonb_build_object('error',jsonb_build_object('code',case when sqlstate='42501' then 'ROOM_UNAVAILABLE' else 'ACTION_FAILED' end,
+      'message',case when sqlstate in ('P0001','42501') then sqlerrm else 'うまくいきませんでした。もう一度試してください。' end));
+  end;
+end $$;
+
+create or replace function public.spectrum_leave_room(p_room_code text,p_player_id text)
+returns jsonb language plpgsql security definer set search_path = pg_catalog,public
+as $$
+declare caller uuid; room text := upper(trim(p_room_code)); result jsonb;
+begin
+  caller := public.spectrum_check_identity(p_player_id);
+  if not public.spectrum_take_limit(caller::text,'leave',30,60) then
+    return jsonb_build_object('error',jsonb_build_object('code','RATE_LIMIT','message','少し待ってから退出してください。'));
+  end if;
+  begin
+    perform public.spectrum_check_member(room,caller);
+    result := public.spectrum_v6_leave_impl(room,p_player_id);
+    delete from public.spectrum_memberships where room_code=room and user_id=caller;
+    return result;
+  exception when others then
+    return jsonb_build_object('error',jsonb_build_object('code','ROOM_UNAVAILABLE','message','部屋が見つからないか、すでに退出しています。'));
+  end;
+end $$;
+
+-- No direct table access, including by authenticated anonymous users.
+revoke all on public.spectrum_rooms,public.spectrum_room_secrets,public.spectrum_player_guesses,
+ public.spectrum_memberships,public.spectrum_request_limits from public,anon,authenticated;
+drop policy if exists "public can read spectrum rooms" on public.spectrum_rooms;
+
+-- The client polls the protected RPC; there is no need for a public change feed.
+do $$ begin
+  if exists(select 1 from pg_publication_tables where pubname='supabase_realtime'
+    and schemaname='public' and tablename='spectrum_rooms') then
+    alter publication supabase_realtime drop table public.spectrum_rooms;
+  end if;
+end $$;
+
+-- Revoke legacy entry points and every helper before allow-listing only the wrappers.
+do $$
+declare f record;
+begin
+  for f in select p.oid::regprocedure as signature from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+    where n.nspname='public' and left(p.proname,9)='spectrum_' loop
+    execute format('revoke all on function %s from public, anon, authenticated',f.signature);
+  end loop;
+end $$;
+grant execute on function public.spectrum_protocol() to anon,authenticated;
+grant execute on function public.spectrum_create_room(text,text,text,jsonb,integer),
+ public.spectrum_join_room(text,text,text),public.spectrum_get_room(text,text),
+ public.spectrum_game_action(text,text,text,jsonb),public.spectrum_leave_room(text,text) to authenticated;
+
+COMMIT;
