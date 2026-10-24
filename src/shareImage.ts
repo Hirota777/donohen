@@ -34,15 +34,15 @@ export async function buildShareImage(result:SharedResult):Promise<Blob>{
  ctx.fillStyle='#df5883';ctx.font=`900 112px ${font}`;ctx.fillText(`${resultRank(result.players,p.score)}位`,64,390)
  ctx.fillStyle='#263655';ctx.font=`800 60px ${font}`;ctx.fillText(`${p.score}`,70,480);const scoreWidth=ctx.measureText(String(p.score)).width;ctx.font=`700 23px ${font}`;ctx.fillText('点',84+scoreWidth,480)
  ctx.fillStyle='#788399';ctx.font=`600 19px ${font}`;ctx.fillText(`${result.players.length}人・全${result.rounds}ラウンド`,70,530)
- rounded(ctx,425,220,705,320,22,'#f5f5fc');ctx.fillStyle='#967336';ctx.font=`800 20px ${font}`;ctx.fillText('MY BEST HINT',452,260)
+ rounded(ctx,425,220,705,320,22,'#f5f5fc');ctx.fillStyle='#967336';ctx.font=`800 22px ${font}`;ctx.fillText('ベストヒント',452,260)
  const best=result.bestHint
  if(best){
-  ctx.fillStyle='#68758f';ctx.font=`600 20px ${font}`;ctx.fillText(fit(ctx,`0 · ${best.prompt.left}`,285),452,305);ctx.textAlign='right';ctx.fillText(fit(ctx,`100 · ${best.prompt.right}`,285),1100,305);ctx.textAlign='left'
-  ctx.fillStyle='#263655';ctx.font=`800 26px ${font}`;lines(ctx,`「${best.clue}」`,644,4).forEach((line,i)=>ctx.fillText(line,452,351+i*33))
-  const answerScale=ctx.createLinearGradient(452,0,1100,0);['#34bdf3','#37cfa6','#f2cb48','#fa729a'].forEach((c,i)=>answerScale.addColorStop(i/3,c));rounded(ctx,452,470,648,8,4,answerScale)
+  ctx.fillStyle='#68758f';ctx.font=`600 22px ${font}`;ctx.textAlign='right';ctx.fillText(`正解 ${best.target}`,1100,260);ctx.textAlign='left'
+  ctx.fillStyle='#263655';ctx.font=`800 32px ${font}`;const clueLines=lines(ctx,`「${best.clue}」`,644,4);clueLines.forEach((line,i)=>ctx.fillText(line,452,378-(clueLines.length-1)*20+i*40))
+  ctx.fillStyle='#68758f';ctx.font=`600 20px ${font}`;ctx.fillText(fit(ctx,`0 · ${best.prompt.left}`,285),452,474);ctx.textAlign='right';ctx.fillText(fit(ctx,`100 · ${best.prompt.right}`,285),1100,474);ctx.textAlign='left'
+  const answerScale=ctx.createLinearGradient(452,0,1100,0);['#34bdf3','#37cfa6','#f2cb48','#fa729a'].forEach((c,i)=>answerScale.addColorStop(i/3,c));rounded(ctx,452,506,648,8,4,answerScale)
   const answerX=452+648*Math.max(0,Math.min(100,best.target))/100
-  ctx.beginPath();ctx.arc(answerX,474,11,0,Math.PI*2);ctx.fillStyle='#263655';ctx.fill();ctx.beginPath();ctx.arc(answerX,474,7,0,Math.PI*2);ctx.fillStyle='#fff';ctx.fill()
-  ctx.fillStyle='#df5883';ctx.font=`800 29px ${font}`;ctx.fillText(`みんなの平均 ${best.average.toFixed(1)} 点`,452,520);ctx.textAlign='right';ctx.font=`600 20px ${font}`;ctx.fillStyle='#68758f';ctx.fillText(`正解 ${best.target}`,1100,520);ctx.textAlign='left'
+  ctx.beginPath();ctx.arc(answerX,510,11,0,Math.PI*2);ctx.fillStyle='#263655';ctx.fill();ctx.beginPath();ctx.arc(answerX,510,7,0,Math.PI*2);ctx.fillStyle='#fff';ctx.fill()
  }
  else{ctx.fillStyle='#68758f';ctx.font=`600 24px ${font}`;ctx.fillText('ヒント役の記録はありません',452,355)}
  ctx.fillStyle='#8c94a5';ctx.font=`500 17px ${font}`;ctx.fillText(fit(ctx,new URL(result.url).host,780),70,578);ctx.textAlign='right';ctx.fillStyle='#b45c80';ctx.font=`700 20px ${font}`;ctx.fillText('#ドノヘン',1130,578)

@@ -267,6 +267,7 @@ begin
     if s->>'hostId' <> p_player_id then raise exception 'ホストだけが開始できます'; end if;
     if s->>'phase' <> 'lobby' then raise exception 'ゲームはすでに始まっています'; end if;
     if jsonb_array_length(s->'players') < 2 then raise exception '2人以上で開始してください'; end if;
+    s := s - 'resultPlayers';
     -- Freeze the turn order at match start; every member is clue-giver 1–3 times.
     turns := coalesce((s->>'roundsPerPlayer')::integer,1);
     if turns not between 1 and 3 then raise exception '回数は1〜3回です'; end if;
@@ -383,12 +384,16 @@ begin
       'cluePlayerId',s->>'cluePlayerId','cluePlayerName',coalesce((select p->>'name' from jsonb_array_elements(s->'players') p where p->>'id'=s->>'cluePlayerId'),'ヒント役'),
       'target',sec.target,'hintPoints',hint_points,'results',(select jsonb_agg(r||jsonb_build_object('name',coalesce((select p->>'name' from jsonb_array_elements(s->'players') p where p->>'id'=r->>'playerId'),'プレイヤー'))) from jsonb_array_elements(results) r)
     )),true);
+    if (s->>'round')::integer>=coalesce((s->>'totalRounds')::integer,5) then
+      s := jsonb_set(s,'{resultPlayers}',s->'players',true);
+    end if;
   elsif p_action='finish' then
     if s->>'hostId'<>p_player_id then raise exception 'ホストだけが結果発表へ進めます'; end if;
     if s->>'phase'<>'reveal' or s->'targetRevealed' is not distinct from 'null'::jsonb
       or (s->>'round')::integer<coalesce((s->>'totalRounds')::integer,5) then
       raise exception '最終ラウンドの答え合わせを終えてから進んでください';
     end if;
+    s := jsonb_set(s,'{resultPlayers}',coalesce(s->'resultPlayers',s->'players'),true);
     s := jsonb_set(s,'{phase}',to_jsonb('finished'::text));
   elsif p_action='restart' then
     if s->>'hostId' <> p_player_id then raise exception 'ホストだけが再スタートできます'; end if;
@@ -407,7 +412,7 @@ begin
     s := jsonb_set(s,'{prompt}',coalesce(p_payload->'prompt',jsonb_build_object('left','冷たい','right','熱い')));
     s := jsonb_set(s,'{clue}',to_jsonb(''::text));
     s := jsonb_set(s,'{phase}',to_jsonb('lobby'::text));
-    s := s - 'answerDeadline' - 'timedOutPlayerIds' - 'matchStats' - 'awardsEnabled' - 'roundHistory';
+    s := s - 'answerDeadline' - 'timedOutPlayerIds' - 'matchStats' - 'awardsEnabled' - 'roundHistory' - 'resultPlayers';
     s := s - 'totalRounds' - 'clueSchedule';
     s := jsonb_set(s,'{promptHistory}','[]'::jsonb,true);
     s := jsonb_set(s,'{answeredPlayerIds}','[]'::jsonb,true);
@@ -461,7 +466,7 @@ returns jsonb language plpgsql security definer set search_path = public, pg_tem
 as $$
 declare
   room text := upper(trim(p_room_code)); s jsonb; ps jsonb := '[]'::jsonb;
-  item jsonb; new_host text; new_clue text; remaining integer;
+  item jsonb; prior_players jsonb; new_host text; new_clue text; remaining integer;
   did_clue_leave boolean; schedule jsonb; current_round integer; answered jsonb := '[]'::jsonb;
 begin
   select public_state into s from public.spectrum_rooms where room_code=room for update;
@@ -469,6 +474,7 @@ begin
   if not exists(select 1 from jsonb_array_elements(s->'players') v where v->>'id'=p_player_id) then
     raise exception 'このルームの参加者ではありません';
   end if;
+  prior_players := s->'players';
   did_clue_leave := s->>'cluePlayerId' = p_player_id;
   for item in select value from jsonb_array_elements(s->'players') loop
     if item->>'id' <> p_player_id then ps := ps || jsonb_build_array(item); end if;
@@ -498,13 +504,20 @@ begin
     s := jsonb_set(s,'{totalRounds}',to_jsonb(jsonb_array_length(schedule)),true);
   end if;
 
+  -- Keep the scored roster separate from live room membership.
+  if s->>'phase'='finished' or (s->>'phase'='reveal'
+    and s->'targetRevealed' is distinct from 'null'::jsonb
+    and (s->>'round')::integer>=coalesce((s->>'totalRounds')::integer,5)) then
+    s := jsonb_set(s,'{resultPlayers}',coalesce(s->'resultPlayers',prior_players),true);
+  end if;
+
   if remaining < 2 and s->>'phase' not in ('lobby','finished') and not (
     s->>'phase'='reveal' and s->'targetRevealed' is distinct from 'null'::jsonb
     and (s->>'round')::integer>=coalesce((s->>'totalRounds')::integer,5)) then
     -- A match requires >=2 players. Pause by returning to the lobby and reset
     -- the incomplete match; scores are retained until host starts again.
     s := jsonb_set(s,'{phase}',to_jsonb('lobby'::text));
-    s := s - 'answerDeadline' - 'timedOutPlayerIds' - 'matchStats' - 'awardsEnabled' - 'roundHistory';
+    s := s - 'answerDeadline' - 'timedOutPlayerIds' - 'matchStats' - 'awardsEnabled' - 'roundHistory' - 'resultPlayers';
     s := jsonb_set(s,'{cluePlayerId}',to_jsonb(new_host));
     s := jsonb_set(s,'{round}',to_jsonb(1));
     s := jsonb_set(s,'{clue}',to_jsonb(''::text));
@@ -790,15 +803,15 @@ begin
   perform pg_advisory_xact_lock(hashtext('donohen-public-shares'));
   if (select count(*) from public.spectrum_result_shares)>=200 then raise exception '共有が混み合っています。時間をおいて試してください。'; end if;
   if (select count(*) from public.spectrum_result_shares where owner_id=caller and created_at>clock_timestamp()-interval '1 day')>=3 then raise exception '今日の共有回数の上限です。また明日試してください。'; end if;
-  select p into player from jsonb_array_elements(s->'players') p where p->>'id'=p_player_id;
+  select p into player from jsonb_array_elements(coalesce(s->'resultPlayers',s->'players')) p where p->>'id'=p_player_id;
   select r into best from jsonb_array_elements(coalesce(s->'roundHistory','[]'::jsonb)) r
     where r->>'cluePlayerId'=p_player_id and jsonb_array_length(r->'results')>0
     order by (select avg((v->>'points')::numeric) from jsonb_array_elements(r->'results') v) desc,(r->>'round')::integer limit 1;
   if best is not null then select avg((r->>'points')::numeric) into average from jsonb_array_elements(best->'results') r; end if;
   insert into public.spectrum_result_shares(owner_id,match_key,metadata,png)
   values(caller,key,jsonb_build_object('name',player->>'name','score',(player->>'score')::integer,
-    'rank',(select count(*)+1 from jsonb_array_elements(s->'players') p where (p->>'score')::integer>(player->>'score')::integer),
-    'playerCount',jsonb_array_length(s->'players'),'rounds',coalesce((s->>'totalRounds')::integer,(s->>'round')::integer),
+    'rank',(select count(*)+1 from jsonb_array_elements(coalesce(s->'resultPlayers',s->'players')) p where (p->>'score')::integer>(player->>'score')::integer),
+    'playerCount',jsonb_array_length(coalesce(s->'resultPlayers',s->'players')),'rounds',coalesce((s->>'totalRounds')::integer,(s->>'round')::integer),
     'bestHint',case when best is null then null else jsonb_build_object('prompt',best->'prompt','clue',best->>'clue','target',best->'target','average',round(average,1)) end),image)
   on conflict(owner_id,match_key) do update set metadata=excluded.metadata,png=excluded.png,created_at=clock_timestamp(),expires_at=clock_timestamp()+interval '7 days'
   returning token,expires_at into share_token,share_expires;

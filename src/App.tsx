@@ -18,6 +18,7 @@ type PublicGame = {
   room: string
   hostId: string
   players: Player[]
+  resultPlayers?: Player[]
   round: number
   securityVersion?: number
   totalRounds?: number
@@ -68,15 +69,11 @@ export default function App() {
   const [now,setNow] = useState(Date.now())
   const [completedReveal, setCompletedReveal] = useState('')
   const [resultTab,setResultTab] = useState<'ranking'|'review'>('ranking')
-  const [openedFinal,setOpenedFinal] = useState('')
   const previousSoundMoment=useRef<HintMoment|null>(null),notifiedHints=useRef(new Set<string>())
   const totalRounds = game?.totalRounds ?? 5
   const roundsPerPlayer = game?.roundsPerPlayer ?? 1
   const configurable = (game?.rulesVersion ?? 0) >= 2
-  const finalOpenKey=`donohen-final-open:${game?.room}:${game?.matchId??''}:${game?.round}`
-  let finalWasOpened=openedFinal===finalOpenKey
-  try{finalWasOpened=finalWasOpened||sessionStorage.getItem(finalOpenKey)==='done'}catch{/* Optional presentation state. */}
-  const displayPhase=game?.phase==='finished'&&!finalWasOpened?'reveal':game?.phase
+  const displayPhase=game?.phase
   const revealKey = `${game?.room}:${game?.matchId ?? ''}:${game?.round}:${displayPhase}:${game?.targetRevealed}`
   const revealComplete = completedReveal === revealKey
   const finishReveal = useCallback(() => setCompletedReveal(revealKey), [revealKey])
@@ -235,10 +232,8 @@ export default function App() {
   const nextRound = () => void act('next_round', { prompt: randomPrompt(game?.promptHistory ?? (game ? [game.prompt] : [])) })
   const restart = () => void act('restart', { prompt: randomPrompt() })
   const openFinalResults=async()=>{
-    if(!game||!revealComplete)return
-    if(game.phase!=='finished'&&!(await act('finish')))return
-    try{sessionStorage.setItem(finalOpenKey,'done')}catch{/* Continue without storage. */}
-    setOpenedFinal(finalOpenKey)
+    if(!game||game.hostId!==playerId||game.phase!=='reveal'||!revealComplete)return
+    await act('finish')
   }
   const startGame = () => void act('start', { prompt: randomPrompt() })
   const setRounds = (value: number) => void act('settings', { roundsPerPlayer: value })
@@ -260,16 +255,17 @@ export default function App() {
     const timer = window.setTimeout(() => {setCopied(false);setLinkCopied(false)}, 1800)
     return () => window.clearTimeout(timer)
   }, [copied,linkCopied])
-  const standings = game ? [...game.players].sort((a,b) => b.score-a.score || a.name.localeCompare(b.name,'ja')) : []
-  const roundEntries = game ? (game.lastRoundResults ?? []).map(r => ({id:r.playerId, name:game.players.find(p=>p.id===r.playerId)?.name ?? 'プレイヤー', score:r.points, guess:r.guess??undefined, detail:r.timedOut?'時間切れ · 未回答':differenceLabel(r.guess??undefined,game.targetRevealed??0)})) : []
-  const awards=game?.awardsEnabled?matchAwards(game.players,game.matchStats??{}):[]
+  const resultPlayers=game?.resultPlayers??game?.players??[]
+  const standings = [...resultPlayers].sort((a,b) => b.score-a.score || a.name.localeCompare(b.name,'ja'))
+  const roundRecord=game?.roundHistory?.find(r=>r.round===game.round)
+  const roundEntries = game ? (game.lastRoundResults ?? []).map(r => ({id:r.playerId, name:roundRecord?.results.find(p=>p.playerId===r.playerId)?.name ?? resultPlayers.find(p=>p.id===r.playerId)?.name ?? 'プレイヤー', score:r.points, guess:r.guess??undefined, detail:r.timedOut?'時間切れ · 未回答':differenceLabel(r.guess??undefined,game.targetRevealed??0)})) : []
+  const awards=game?.awardsEnabled?matchAwards(resultPlayers,game.matchStats??{}):[]
   const reviewRounds:RoundReview[]=game?.roundHistory?.length?game.roundHistory:game?.phase==='finished'&&game.targetRevealed!==null?[{
     round:game.round,prompt:game.prompt,clue:game.clue,cluePlayerId:game.cluePlayerId,
-    cluePlayerName:game.players.find(p=>p.id===game.cluePlayerId)?.name??'ヒント役',target:game.targetRevealed,hintPoints:game.hintPoints??0,
-    results:game.lastRoundResults.map(r=>({...r,name:game.players.find(p=>p.id===r.playerId)?.name??'プレイヤー'}))
+    cluePlayerName:resultPlayers.find(p=>p.id===game.cluePlayerId)?.name??'ヒント役',target:game.targetRevealed,hintPoints:game.hintPoints??0,
+    results:game.lastRoundResults.map(r=>({...r,name:resultPlayers.find(p=>p.id===r.playerId)?.name??'プレイヤー'}))
   }]:[]
-  const connections=game?compatibilityAwards(game.players,reviewRounds,playerId):[]
-  const roundRecord=game?.roundHistory?.find(r=>r.round===game.round)
+  const connections=game?compatibilityAwards(resultPlayers,reviewRounds,playerId):[]
   const hintName=roundRecord?.cluePlayerName??game?.players.find(p=>p.id===game.cluePlayerId)?.name??'ヒント役'
   const visibleTotal = (player: Player) => displayPhase==='reveal' && game?.targetRevealed!==null && !revealComplete
     ? player.score - (player.id===(roundRecord?.cluePlayerId??game?.cluePlayerId)?(game?.hintPoints??0):(roundEntries.find(e=>e.id===player.id)?.score ?? 0)) : player.score
@@ -331,7 +327,7 @@ export default function App() {
       </div></div>
       <button className="back" disabled={busy} onClick={() => void leave()}>退出する</button>
     </section> : <section className="game">
-      <div className="gamehead"><div><div className="eyebrow">ルーム {game.room}</div><h1>{displayPhase==='finished'?'結果発表':<>ラウンド <em>{game.round} / {totalRounds}</em></>}</h1></div><button className="textbtn" onClick={copy}><Copy size={15}/>{copied ? 'コピーしました' : 'コードをコピー'}</button></div>
+      <div className="gamehead"><h1>{displayPhase==='finished'?'結果発表':<>ラウンド <em>{game.round} / {totalRounds}</em></>}</h1></div>
       {displayPhase!=='finished'&&<><div className="round-context"><span>{game.phase==='clue'?'ヒントを考える':game.phase==='guess'?'位置を予想する':'答え合わせ'}</span><span>ヒント役 · {hintName}</span></div>
       <div className="match-progress" role="progressbar" aria-label="ラウンドの進行" aria-valuenow={game.round} aria-valuemin={0} aria-valuemax={totalRounds}><i style={{width:`${Math.min(100,game.round/totalRounds*100)}%`}}/></div>
       <details className="player-overview"><summary>メンバーと合計点 <span>{game.players.length}人</span></summary><div className="players-strip">{game.players.map(p=><span className={`chip ${p.id===game.cluePlayerId?'active':''}`} key={p.id}>{p.name}{p.id===game.cluePlayerId?' · ヒント役':''}<b>{visibleTotal(p)}点</b></span>)}</div></details>
@@ -374,7 +370,7 @@ export default function App() {
           </>}
           {game.targetRevealed===null&&game.hostId===playerId&&<button className="primary full" disabled={busy} onClick={reveal}>答えを見る</button>}
           {game.targetRevealed!==null&&game.round<totalRounds&&game.hostId===playerId&&<button className="primary full" disabled={busy||!revealComplete} onClick={nextRound}>次のラウンド <ArrowRight size={17}/></button>}
-          {game.targetRevealed!==null&&game.round>=totalRounds&&(game.hostId===playerId||game.phase==='finished')&&<button className="primary full" disabled={busy||!revealComplete} onClick={()=>void openFinalResults()}>最終結果を見る <ArrowRight size={17}/></button>}
+          {game.targetRevealed!==null&&game.round>=totalRounds&&game.hostId===playerId&&<button className="primary full" disabled={busy||!revealComplete} onClick={()=>void openFinalResults()}>最終結果を見る <ArrowRight size={17}/></button>}
           {game.targetRevealed!==null&&game.round>=totalRounds&&game.hostId!==playerId&&game.phase!=='finished'&&revealComplete&&<p className="quiet">ホストが最終結果へ進むのを待とう。</p>}
         </>}
         {displayPhase==='finished'&&<div className="final-results">
