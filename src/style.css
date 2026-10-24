@@ -109,6 +109,13 @@ button:focus-visible,summary:focus-visible{outline:3px solid #7256cb;outline-off
 .reveal-rank{display:inline-block;min-width:30px;color:#68738a;font-size:12px}
 .winner .reveal-rank{color:#a47515}
 .reveal-points{font-size:21px;color:#ec5e8b;font-variant-numeric:tabular-nums;animation:score-pop 1.2s ease-out both}
+.reveal-entry{align-items:center;gap:16px}
+.reveal-player{min-width:0;overflow-wrap:anywhere}
+.reveal-player>span:first-child{display:block}
+.reveal-guess{display:flex;align-items:baseline;gap:10px;margin:8px 0 2px}
+.reveal-guess>span{font-size:12px;color:#68738a;font-weight:600}
+.reveal-guess strong{font-size:clamp(32px,8vw,42px);line-height:1.15;font-weight:800;color:#24334c;font-variant-numeric:tabular-nums}
+.reveal-points{flex-shrink:0;white-space:nowrap}
 .reveal-curtain{display:flex;justify-content:center;gap:16px;padding:24px;color:#b5bdd0}
 .reveal-curtain span{display:grid;place-items:center;width:40px;height:48px;border-radius:10px;background:#f3f5fa;font-weight:800;font-size:24px}
 .reveal-skip{margin:16px auto 0;font-size:11px;font-weight:500}

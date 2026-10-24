@@ -214,7 +214,7 @@ export default function App() {
   }, [copied])
   const standings = game ? [...game.players].sort((a,b) => b.score-a.score || a.name.localeCompare(b.name,'ja')) : []
   const roundEntries = game ? [
-    ...(game.lastRoundResults ?? []).map(r => ({id:r.playerId, name:game.players.find(p=>p.id===r.playerId)?.name ?? 'プレイヤー', score:r.points, detail:`予想 ${r.guess} · 差 ${r.distance}`})),
+    ...(game.lastRoundResults ?? []).map(r => ({id:r.playerId, name:game.players.find(p=>p.id===r.playerId)?.name ?? 'プレイヤー', score:r.points, guess:r.guess, detail:`差 ${r.distance}`})),
     ...(game.players.some(p=>p.id===game.cluePlayerId) ? [{id:game.cluePlayerId, name:game.players.find(p=>p.id===game.cluePlayerId)!.name, score:game.hintPoints ?? 0, detail:'ヒント役'}] : [])
   ] : []
   const visibleTotal = (player: Player) => game?.phase==='reveal' && game.targetRevealed!==null && !revealComplete

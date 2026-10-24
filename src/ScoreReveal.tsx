@@ -43,7 +43,10 @@ export default function ScoreReveal({ entries, revealKey, playerId, final = fals
     <div className="reveal-list" aria-live="polite" aria-relevant="additions">
       {!count&&<div className="reveal-curtain" aria-label="結果発表"><span>?</span><span>?</span><span>?</span></div>}
       {visibleScores(entries,count).map(entry => <div className={`scoreline reveal-entry ${entry.id===playerId?'myanswer':''} ${scoreRank(entries,entry.score)===1?'winner':''}`} key={entry.id}>
-        <span><b className="reveal-rank">{scoreRank(entries,entry.score)}位</b> {entry.name}{entry.id===playerId?'（あなた）':''}{entry.detail&&<small>{entry.detail}</small>}</span>
+        <span className="reveal-player"><span><b className="reveal-rank">{scoreRank(entries,entry.score)}位</b> {entry.name}{entry.id===playerId?'（あなた）':''}</span>
+          {!final&&entry.guess!==undefined&&<span className="reveal-guess"><span>予想</span><strong>{entry.guess}</strong></span>}
+          {entry.detail&&<small>{entry.detail}</small>}
+        </span>
         <b className="reveal-points">{final?'':'+'}{entry.score} 点</b>
       </div>)}
     </div>

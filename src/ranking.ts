@@ -1,4 +1,4 @@
-export type ScoreEntry = { id: string; name: string; score: number; detail?: string }
+export type ScoreEntry = { id: string; name: string; score: number; guess?: number; detail?: string }
 
 export const scoreGroups = (entries: ScoreEntry[]) => [...new Set(entries.map(e => e.score))].sort((a,b) => a-b)
 export const scoreRank = (entries: ScoreEntry[], score: number) => entries.filter(e => e.score > score).length + 1
