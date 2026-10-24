@@ -15,7 +15,7 @@ export default function PrepareHints({room,matchId,playerId,hints,players,readyI
  const complete=hints.length>0&&hints.every(h=>value(h).trim())
  const submit=async()=>{if(busy||submitted||!complete)return;if(await onSubmit(hints.map(h=>({turnId:h.turnId,clue:value(h).trim()}))))clearDrafts()}
  return <div className="hint-preparation">
-  <div className="preparation-intro"><h2>{submitted?'ヒントを提出しました':'あなたのヒントを考えよう'}</h2><p>{submitted?'みんなのヒントがそろうと、最初のラウンドが始まります。':`担当する${hints.length}個のお題をまとめて準備。お題と正解はあなただけに見えています。`}</p></div>
+  <div className="preparation-intro"><h2>{submitted?'ヒントを提出しました':'あなたのヒントを考えよう'}</h2><p>{submitted?'みんなのヒントがそろったら、カウントダウンで始まります。':`担当する${hints.length}個のお題をまとめて準備。お題と正解はあなただけに見えています。`}</p></div>
   {!hints.length&&<p role="alert">お題を取得できませんでした。再読み込みしてください。</p>}
   <div className="preparation-cards">{hints.map((hint,index)=><article className="preparation-card" key={hint.turnId}>
    <div className="preparation-card-heading"><h3>ヒント {index+1}<small> / {hints.length}</small></h3>{submitted&&<span>提出済み</span>}</div>

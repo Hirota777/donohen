@@ -12,7 +12,7 @@ import { checkedRpc, db, ensureIdentity, errorMessage, GameApiError, makeRoomCod
 import { ArrowRight, Copy, Users } from 'lucide-react'
 
 type Prompt = { left: string; right: string }
-type Phase = 'lobby' | 'prepare' | 'clue' | 'guess' | 'reveal' | 'finished'
+type Phase = 'lobby' | 'prepare' | 'countdown' | 'clue' | 'guess' | 'reveal' | 'finished'
 type Player = { id: string; name: string; score: number }
 type RoundResult = { playerId: string; guess: number|null; distance: number|null; points: number; timedOut?:boolean }
 type PublicGame = {
@@ -22,6 +22,7 @@ type PublicGame = {
   resultPlayers?: Player[]
   hintBatchVersion?: number
   preparedPlayerIds?: string[]
+  countdownEndsAt?: number
   round: number
   securityVersion?: number
   totalRounds?: number
@@ -74,6 +75,7 @@ export default function App() {
   const [completedReveal, setCompletedReveal] = useState('')
   const [resultTab,setResultTab] = useState<'ranking'|'review'>('ranking')
   const previousSoundMoment=useRef<HintMoment|null>(null),notifiedHints=useRef(new Set<string>())
+  const lastServerUpdate=useRef<{room:string;at:number}|null>(null)
   const totalRounds = game?.totalRounds ?? 5
   const roundsPerPlayer = game?.roundsPerPlayer ?? 1
   const configurable = (game?.rulesVersion ?? 0) >= 2
@@ -86,12 +88,18 @@ export default function App() {
   const guessers = game?.players.filter(p => p.id !== game.cluePlayerId) ?? []
   const answered = game?.answeredPlayerIds ?? []
   const hasAnswered = answered.includes(playerId)
+  const fastPolling=game?.phase==='prepare'||game?.phase==='countdown'
+  const countdown=game?.phase==='countdown'&&game.countdownEndsAt?Math.max(0,Math.min(3,Math.ceil((game.countdownEndsAt-now-clockOffset)/1000))):0
   const remaining=game?.answerDeadline?Math.max(0,Math.ceil((game.answerDeadline-now-clockOffset)/1000)):null
 
 
   const applyRpc = useCallback((data: unknown) => {
     const result = data as RpcResult
     if (result?.state) {
+      if(typeof result.serverNow==='number'){
+        if(lastServerUpdate.current?.room===result.state.room&&result.serverNow<lastServerUpdate.current.at)return
+        lastServerUpdate.current={room:result.state.room,at:result.serverNow}
+      }
       const next=result.state,key=`${next.room}:${next.matchId??''}:${next.round}:${next.cluePlayerId}:${next.clue}`
       if(isNewClue(previousSoundMoment.current,next)&&!notifiedHints.current.has(key)){
         notifiedHints.current.add(key);if(notifiedHints.current.size>100)notifiedHints.current.delete(notifiedHints.current.values().next().value!)
@@ -160,9 +168,9 @@ export default function App() {
       }
     }
     void tick()
-    const timer = window.setInterval(() => void tick(), 1500)
+    const timer = window.setInterval(() => void tick(), fastPolling?500:1500)
     return () => { alive = false; window.clearInterval(timer) }
-  }, [game?.room, playerId, rpc, applyRpc])
+  }, [game?.room, playerId, rpc, applyRpc,fastPolling])
 
   const createRoom = async () => {
     if (!db) { setStatus('今は遊べません。時間をおいて試してください。'); return }
@@ -244,10 +252,10 @@ export default function App() {
   const setRounds = (value: number) => void act('settings', { roundsPerPlayer: value })
   const setAnswerSeconds = (value:number) => void act('settings',{answerSeconds:value})
   useEffect(()=>{
-    if(game?.phase!=='guess'||!game.answerDeadline)return
-    const timer=window.setInterval(()=>setNow(Date.now()),250)
+    if(!((game?.phase==='guess'&&game.answerDeadline)||(game?.phase==='countdown'&&game.countdownEndsAt)))return
+    const timer=window.setInterval(()=>setNow(Date.now()),game.phase==='countdown'?100:250)
     return ()=>window.clearInterval(timer)
-  },[game?.phase,game?.answerDeadline])
+  },[game?.phase,game?.answerDeadline,game?.countdownEndsAt])
   useEffect(() => {
     setGuessValue(50)
   }, [game?.room, game?.round])
@@ -326,11 +334,15 @@ export default function App() {
         <h2 className="member-heading">メンバー</h2>
         {game.players.map(p=><div className="scoreline" key={p.id}><span>{p.name}{p.id===playerId?'（あなた）':''}</span>{p.id===game.hostId&&<b>ホスト</b>}</div>)}
       </div><div className="panel gamepanel lobby-settings"><h2>ゲームの設定</h2>
-        {configurable&&<fieldset className="round-settings"><legend>ヒント役は1人何回？</legend><div className="round-options">{[1,2,3].map(value=><button key={value} className={roundsPerPlayer===value?'selected':''} aria-pressed={roundsPerPlayer===value} disabled={busy||game.hostId!==playerId} onClick={()=>setRounds(value)}>{value}回</button>)}</div><p>{game.players.length}人 × {roundsPerPlayer}回 = 全{game.players.length*roundsPerPlayer}ラウンド</p></fieldset>}
+        {configurable&&<fieldset className="round-settings"><legend>ヒント役は1人何回？</legend><div className="round-options">{[1,2,3].map(value=><button key={value} className={roundsPerPlayer===value?'selected':''} aria-pressed={roundsPerPlayer===value} disabled={busy||game.hostId!==playerId} onClick={()=>setRounds(value)}>{value}回</button>)}</div><p>{game.players.length}人 × {roundsPerPlayer}回 = 全{game.players.length*roundsPerPlayer}ラウンド。順番はランダムです。</p></fieldset>}
         {(game.featuresVersion??0)>=1&&<fieldset className="round-settings"><legend>回答時間</legend><div className="round-options">{[0,30,60].map(value=><button key={value} className={(game.answerSeconds??0)===value?'selected':''} aria-pressed={(game.answerSeconds??0)===value} disabled={busy||game.hostId!==playerId} onClick={()=>setAnswerSeconds(value)}>{value?`${value}秒`:'なし'}</button>)}</div><p>各ラウンドのヒント公開から計測。時間切れの未回答は0点です。</p></fieldset>}
         {game.hostId===playerId?<><button className="primary full" disabled={busy||!allReady} onClick={startGame}>ゲームを始める <ArrowRight size={17}/></button>{!allReady&&<p className="quiet">あと1人で始められます</p>}</>:<p className="quiet">ホストが始めるのを待とう。</p>}
         {status&&<p className="status" role="alert">{status}</p>}
       </div></div>
+      <button className="back" disabled={busy} onClick={() => void leave()}>退出する</button>
+    </section> : game.phase==='countdown' ? <section className="game">
+      <div className="panel countdown-panel"><p>みんなのヒントがそろいました</p><h1>まもなくスタート</h1><div className={`countdown-number ${countdown===0?'countdown-start':''}`} key={countdown} role="timer" aria-live="polite" aria-atomic="true" aria-label={countdown?`スタートまで${countdown}秒`:'スタート'}>{countdown||'スタート！'}</div></div>
+      {status&&<p className="status" role="alert">{status}</p>}
       <button className="back" disabled={busy} onClick={() => void leave()}>退出する</button>
     </section> : game.phase==='prepare' ? <section className="game">
       <div className="gamehead preparation-head"><h1>ヒントを準備</h1><div className="score"><Users size={18}/>{game.players.length}人 · 全{totalRounds}ラウンド</div></div>

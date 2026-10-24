@@ -258,3 +258,9 @@ button:focus-visible,summary:focus-visible{outline:3px solid #7256cb;outline-off
 .preparation-progress{border-top:1px solid #ece8f1;margin-top:26px;padding-top:20px}.preparation-progress>div:first-child{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .preparation-progress h3{font-size:15px;margin:0 0 12px}.preparation-progress strong{font-size:14px;color:#69758b}.hint-preparation>.primary{margin-top:22px}
 @media(max-width:700px){.preparation-cards{grid-template-columns:1fr}.preparation-card{padding:18px}.preparation-intro>p{margin-bottom:18px}}
+.countdown-panel{text-align:center;min-height:350px;display:flex;flex-direction:column;align-items:center;justify-content:center;background:radial-gradient(ellipse at center,#fff3f7 0,#fff 75%);padding:40px 20px}
+.countdown-panel>p{font-size:13px;margin:0 0 14px;color:#788399}.countdown-panel h1{font-size:clamp(23px,5vw,32px);margin:0;color:#263655}
+.countdown-number{display:flex;align-items:center;justify-content:center;min-height:180px;font-size:clamp(88px,20vw,140px);font-weight:900;color:#df5883;font-variant-numeric:tabular-nums;animation:countdown-arrive .35s ease-out}
+.countdown-number.countdown-start{font-size:clamp(32px,7vw,54px)}
+@keyframes countdown-arrive{from{opacity:.3;transform:translateY(8px) scale(.94)}to{opacity:1;transform:translateY(0) scale(1)}}
+@media(prefers-reduced-motion:reduce){.countdown-number{animation:none}}
