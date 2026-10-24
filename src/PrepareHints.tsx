@@ -23,7 +23,7 @@ export default function PrepareHints({room,matchId,playerId,hints,players,readyI
    <div className="secret"><span>あなただけの正解</span><strong>{hint.target}<small> / 100</small></strong><div className="track"><i style={{left:`${hint.target}%`}}/></div></div>
    {submitted?<p className="prepared-clue">「{hint.clue??value(hint)}」</p>:<><label htmlFor={`prepared-hint-${hint.turnId}`}>このお題のヒント</label><textarea id={`prepared-hint-${hint.turnId}`} rows={2} maxLength={100} value={value(hint)} disabled={busy} onChange={e=>change(hint.turnId,e.target.value)} placeholder="この正解の位置に合う言葉を考えよう"/></>}
   </article>)}</div>
-  {!submitted&&<><button className="primary full" disabled={busy||!complete} onClick={()=>void submit()}>ヒントをまとめて提出する</button><p className="quiet">提出後は変更できません。ヒントはラウンド順に公開します。</p></>}
+  {!submitted&&<><button className="primary full" disabled={busy||!complete} onClick={()=>void submit()}>ヒントを提出する</button><p className="quiet">提出後は変更できません。ヒントはラウンド順に公開します。</p></>}
   <section className="preparation-progress" aria-label="ヒントの提出状況"><div><h3>みんなの準備</h3><strong>{readyIds.length} / {players.length} 人</strong></div><div className="answerchips">{players.map(p=><span key={p.id} className={`answerchip ${readyIds.includes(p.id)?'done':''}`}><span aria-label={readyIds.includes(p.id)?'提出済み':'未提出'}>{readyIds.includes(p.id)?'✓':'○'}</span> {p.name}{p.id===playerId?'（あなた）':''}</span>)}</div></section>
  </div>
 }
