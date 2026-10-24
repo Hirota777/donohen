@@ -294,7 +294,7 @@ export default function App() {
   }
 
   return <main className="shell">
-    <header className="top"><a className="brand" aria-label="ドノヘン？"><span className="brandicon" aria-hidden="true"><img src="/favicon.svg?v=c1" alt="" width="35" height="35"/></span><span className="brandname"><span>ド</span><span>ノ</span><span>ヘ</span><span>ン</span><span>？</span></span></a><SoundControls/></header>
+    <header className="top"><a className="brand" aria-label="ドノヘン？"><span className="brandicon" aria-hidden="true"><img src="/favicon.svg?v=a1" alt="" width="35" height="35"/></span><span className="brandname"><span>ド</span><span>ノ</span><span>ヘ</span><span>ン</span><span>？</span></span></a><SoundControls/></header>
     {game&&connectionLost&&<p className="connection-error" role="status">接続が途切れました。画面はそのままでお待ちください。</p>}
     {restoring ? <section className="restore-placeholder" aria-busy="true"><span className="sr-only" role="status">読み込み中</span><div className="skeleton"/><div className="skeleton"/></section> : !game ? <section className="landing">
       <div className="hero">
