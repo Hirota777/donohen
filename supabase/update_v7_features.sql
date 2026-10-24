@@ -38,7 +38,7 @@ begin
   s := jsonb_build_object(
     'room', p_room_code, 'hostId', p_player_id,
     'players', jsonb_build_array(jsonb_build_object('id',p_player_id,'name',trim(p_player_name),'score',0)),
-    'featuresVersion',1,'answerSeconds',0,'securityVersion',6,'rulesVersion',3,'roundsPerPlayer',1,'round',1,'cluePlayerId',p_player_id,'prompt',p_prompt,'promptHistory','[]'::jsonb,'clue','','phase','lobby',
+    'featuresVersion',1,'answerSeconds',0,'securityVersion',6,'rulesVersion',4,'roundsPerPlayer',1,'round',1,'cluePlayerId',p_player_id,'prompt',p_prompt,'promptHistory','[]'::jsonb,'clue','','phase','lobby',
     'answeredPlayerIds','[]'::jsonb,'lastRoundResults','[]'::jsonb,'targetRevealed',null,'updatedAt',now()
   );
   insert into public.spectrum_rooms(room_code,public_state,security_version,creator_id,expires_at) values(p_room_code,s,6,auth.uid(),now()+interval '2 hours');
@@ -125,7 +125,7 @@ begin
       from generate_series(1,turns) as cycles(cycle)
       cross join jsonb_array_elements(ps) with ordinality as members(value,ord);
     next_id := schedule->>0;
-    s := jsonb_set(s,'{rulesVersion}',to_jsonb(3),true);
+    s := jsonb_set(s,'{rulesVersion}',to_jsonb(4),true);
     s := jsonb_set(s,'{awardsEnabled}','true'::jsonb,true);
     s := jsonb_set(s,'{matchStats}','{}'::jsonb,true);
     s := jsonb_set(s,'{matchId}',to_jsonb(now()::text),true);
@@ -186,7 +186,8 @@ begin
         if missed and not (coalesce(s->'timedOutPlayerIds','[]'::jsonb) ? (item->>'id')) then raise exception '一部の回答がありません'; end if;
         dist := case when missed then null else abs(sec.target - g) end;
         -- Keep the scoring rule frozen for matches already in progress.
-        pts := case when coalesce((s->>'rulesVersion')::integer,2)>=3
+        pts := case when coalesce((s->>'rulesVersion')::integer,2)>=4 and dist=0 then 15
+          when coalesce((s->>'rulesVersion')::integer,2)>=3
           then greatest(0,10-((dist+1)/2))
           else case when dist=0 then 5 when dist<=2 then 4 when dist<=4 then 3 when dist<=6 then 2 when dist<=8 then 1 else 0 end end;
         if missed then pts:=0; g:=null; end if;
