@@ -148,7 +148,7 @@ begin
   s := jsonb_build_object(
     'room', p_room_code, 'hostId', p_player_id,
     'players', jsonb_build_array(jsonb_build_object('id',p_player_id,'name',trim(p_player_name),'score',0)),
-    'securityVersion',6,'rulesVersion',2,'roundsPerPlayer',1,'round',1,'cluePlayerId',p_player_id,'prompt',p_prompt,'promptHistory','[]'::jsonb,'clue','','phase','lobby',
+    'securityVersion',6,'rulesVersion',3,'roundsPerPlayer',1,'round',1,'cluePlayerId',p_player_id,'prompt',p_prompt,'promptHistory','[]'::jsonb,'clue','','phase','lobby',
     'answeredPlayerIds','[]'::jsonb,'lastRoundResults','[]'::jsonb,'targetRevealed',null,'updatedAt',now()
   );
   insert into public.spectrum_rooms(room_code,public_state,security_version,creator_id,expires_at) values(p_room_code,s,6,auth.uid(),now()+interval '2 hours');
@@ -248,7 +248,7 @@ begin
       from generate_series(1,turns) as cycles(cycle)
       cross join jsonb_array_elements(ps) with ordinality as members(value,ord);
     next_id := schedule->>0;
-    s := jsonb_set(s,'{rulesVersion}',to_jsonb(2),true);
+    s := jsonb_set(s,'{rulesVersion}',to_jsonb(3),true);
     s := jsonb_set(s,'{matchId}',to_jsonb(now()::text),true);
     s := jsonb_set(s,'{clueSchedule}',schedule,true);
     s := jsonb_set(s,'{totalRounds}',to_jsonb(jsonb_array_length(schedule)),true);
@@ -300,7 +300,10 @@ begin
           where room_code=room and round_number=(s->>'round')::integer and player_id=item->>'id';
         if not found then raise exception '一部の回答がありません'; end if;
         dist := abs(sec.target - g);
-        pts := case when dist=0 then 5 when dist<=2 then 4 when dist<=4 then 3 when dist<=6 then 2 when dist<=8 then 1 else 0 end;
+        -- Keep the scoring rule frozen for matches already in progress.
+        pts := case when coalesce((s->>'rulesVersion')::integer,2)>=3
+          then greatest(0,10-((dist+1)/2))
+          else case when dist=0 then 5 when dist<=2 then 4 when dist<=4 then 3 when dist<=6 then 2 when dist<=8 then 1 else 0 end end;
         total_guess_points := total_guess_points + pts;
         guesser_count := guesser_count + 1;
         item := jsonb_set(item,'{score}',to_jsonb(coalesce((item->>'score')::integer,0)+pts));

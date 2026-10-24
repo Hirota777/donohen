@@ -306,7 +306,7 @@ export default function App() {
             <div className="resultrow"><span>正解 <b>{game.targetRevealed}</b></span></div>
             <ScoreReveal key={revealKey} entries={roundEntries} revealKey={revealKey} playerId={playerId} onComplete={finishReveal}/>
             {revealComplete&&<><h3>合計</h3>{standings.map(p=><div className="scoreline" key={p.id}><span>{p.name}{p.id===playerId?'（あなた）':''}</span><b>{p.score} 点</b></div>)}</>}
-            <details className="help"><summary>得点のつけ方</summary><p>{configurable?'ぴったりなら5点。差が2以内で4点、4以内で3点、6以内で2点、8以内で1点。':'ぴったりなら5点。差が3以内で4点、7以内で3点、12以内で2点、20以内で1点。'}ヒント役はみんなの平均点（四捨五入）をもらえます。</p></details>
+            <details className="help"><summary>得点のつけ方</summary><p>{(game.rulesVersion??0)>=3?'ぴったりなら10点。差が1〜2で9点、3〜4で8点、5〜6で7点、7〜8で6点、9〜10で5点、11〜12で4点、13〜14で3点、15〜16で2点、17〜18で1点。19以上は0点。':configurable?'ぴったりなら5点。差が2以内で4点、4以内で3点、6以内で2点、8以内で1点。':'ぴったりなら5点。差が3以内で4点、7以内で3点、12以内で2点、20以内で1点。'}ヒント役はみんなの平均点（四捨五入）をもらえます。</p></details>
           </>}
           {game.targetRevealed===null&&game.hostId===playerId&&<button className="primary full" disabled={busy} onClick={reveal}>答えを見る</button>}
           {game.targetRevealed!==null&&game.round<totalRounds&&game.hostId===playerId&&<button className="primary full" disabled={busy||!revealComplete} onClick={nextRound}>次のラウンド <ArrowRight size={17}/></button>}
