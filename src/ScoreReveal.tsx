@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { scoreGroups, scoreRank, visibleScores, type ScoreEntry } from './ranking'
+import PredictionScale from './PredictionScale'
 
-type Props = { entries: ScoreEntry[]; revealKey: string; playerId: string; final?: boolean; onComplete: () => void }
+type Props = { entries: ScoreEntry[]; revealKey: string; playerId: string; final?: boolean; target?: number; onComplete: () => void }
 
-export default function ScoreReveal({ entries, revealKey, playerId, final = false, onComplete }: Props) {
+export default function ScoreReveal({ entries, revealKey, playerId, final = false, target, onComplete }: Props) {
   const [count, setCount] = useState(0)
   const timer = useRef<number>()
   const groups = scoreGroups(entries)
@@ -40,6 +41,7 @@ export default function ScoreReveal({ entries, revealKey, playerId, final = fals
   }, [storageKey, groups.length, onComplete])
 
   return <div className={`score-reveal ${final?'final-reveal':''}`}>
+    {!final&&target!==undefined&&<PredictionScale entries={visibleScores(entries,count)} target={target}/>}
     <div className="reveal-list" aria-live="polite" aria-relevant="additions">
       {!count&&<div className="reveal-curtain" aria-label="結果発表"><span>?</span><span>?</span><span>?</span></div>}
       {visibleScores(entries,count).map(entry => <div className={`scoreline reveal-entry ${entry.id===playerId?'myanswer':''} ${scoreRank(entries,entry.score)===1?'winner':''}`} key={entry.id}>

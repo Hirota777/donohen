@@ -2,6 +2,11 @@
 -- Existing matches retain their scoring. New matches started after this use rulesVersion=3.
 BEGIN;
 do $$ begin
+ if to_regprocedure('public.spectrum_expire_round(text)') is not null then
+  raise exception 'v7環境では旧更新SQLを実行しないでください。update_v7_features.sqlを使用してください。';
+ end if;
+end $$;
+do $$ begin
   if to_regprocedure('public.spectrum_protocol()') is null then
     raise exception '先にv6セキュリティ更新SQLを適用してください。';
   end if;

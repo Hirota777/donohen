@@ -133,6 +133,25 @@ create or replace function public.spectrum_protocol()
 returns jsonb language sql stable security definer set search_path = pg_catalog,public
 as $$ select jsonb_build_object('version',6,'authRequired',true) $$;
 
+create or replace function public.spectrum_expire_round(p_room_code text)
+returns void language plpgsql security definer set search_path=pg_catalog,public
+as $$
+declare s jsonb; missing jsonb;
+begin
+ select public_state into s from public.spectrum_rooms where room_code=p_room_code for update;
+ if s->>'phase'='guess' and (s->>'answerDeadline') is not null
+    and (s->>'answerDeadline')::numeric<=extract(epoch from clock_timestamp())*1000 then
+   select coalesce(jsonb_agg(p->>'id'),'[]'::jsonb) into missing
+   from jsonb_array_elements(s->'players') p
+   where p->>'id'<>s->>'cluePlayerId'
+     and not exists(select 1 from public.spectrum_player_guesses g where g.room_code=p_room_code
+       and g.round_number=(s->>'round')::integer and g.player_id=p->>'id');
+   s:=jsonb_set(s,'{timedOutPlayerIds}',missing,true);
+   s:=jsonb_set(s,'{phase}','"reveal"'::jsonb);
+   update public.spectrum_rooms set public_state=s,updated_at=clock_timestamp() where room_code=p_room_code;
+ end if;
+end $$;
+
 create or replace function public.spectrum_v6_create_impl(
   p_room_code text, p_player_id text, p_player_name text, p_prompt jsonb, p_target integer
 ) returns jsonb
@@ -148,12 +167,12 @@ begin
   s := jsonb_build_object(
     'room', p_room_code, 'hostId', p_player_id,
     'players', jsonb_build_array(jsonb_build_object('id',p_player_id,'name',trim(p_player_name),'score',0)),
-    'securityVersion',6,'rulesVersion',3,'roundsPerPlayer',1,'round',1,'cluePlayerId',p_player_id,'prompt',p_prompt,'promptHistory','[]'::jsonb,'clue','','phase','lobby',
+    'featuresVersion',1,'answerSeconds',0,'securityVersion',6,'rulesVersion',3,'roundsPerPlayer',1,'round',1,'cluePlayerId',p_player_id,'prompt',p_prompt,'promptHistory','[]'::jsonb,'clue','','phase','lobby',
     'answeredPlayerIds','[]'::jsonb,'lastRoundResults','[]'::jsonb,'targetRevealed',null,'updatedAt',now()
   );
   insert into public.spectrum_rooms(room_code,public_state,security_version,creator_id,expires_at) values(p_room_code,s,6,auth.uid(),now()+interval '2 hours');
   insert into public.spectrum_room_secrets(room_code,target,target_player_id) values(p_room_code,server_target,p_player_id);
-  return jsonb_build_object('state',s,'target',server_target,'ownGuess',null);
+  return jsonb_build_object('serverNow',extract(epoch from clock_timestamp())*1000,'state',s,'target',server_target,'ownGuess',null);
 end $$;
 
 create or replace function public.spectrum_v6_join_impl(
@@ -177,7 +196,7 @@ begin
   if s->>'cluePlayerId'=p_player_id and s->>'phase'='clue' then
     select target into result_target from public.spectrum_room_secrets where room_code=upper(trim(p_room_code));
   end if;
-  return jsonb_build_object('state',s,'target',result_target);
+  return jsonb_build_object('serverNow',extract(epoch from clock_timestamp())*1000,'state',s,'target',result_target);
 end $$;
 
 create or replace function public.spectrum_v6_get_impl(
@@ -187,6 +206,7 @@ language plpgsql security definer set search_path = public, pg_temp
 as $$
 declare s jsonb; t integer := null; own_answer integer := null;
 begin
+  perform public.spectrum_expire_round(upper(trim(p_room_code)));
   select public_state into s from public.spectrum_rooms where room_code=upper(trim(p_room_code));
   if s is null then raise exception 'ルームが見つかりません'; end if;
   if not exists(select 1 from jsonb_array_elements(s->'players') p where p->>'id'=p_player_id) then
@@ -200,7 +220,7 @@ begin
       where room_code=upper(trim(p_room_code))
         and round_number=(s->>'round')::integer and player_id=p_player_id;
   end if;
-  return jsonb_build_object('state',s,'target',t,'ownGuess',own_answer);
+  return jsonb_build_object('serverNow',extract(epoch from clock_timestamp())*1000,'state',s,'target',t,'ownGuess',own_answer);
 end $$;
 
 create or replace function public.spectrum_v6_action_impl(
@@ -219,8 +239,9 @@ declare
   total_guess_points integer := 0;
   hint_points integer := 0;
   guesser_count integer := 0;
-  turns integer; schedule jsonb; match_rounds integer;
+  turns integer; schedule jsonb; match_rounds integer; stats jsonb; st jsonb; missed boolean;
 begin
+  perform public.spectrum_expire_round(room);
   -- A row-level lock serializes room updates and prevents concurrent double submissions.
   select public_state into s from public.spectrum_rooms where room_code=room for update;
   if s is null then raise exception 'ルームが見つかりません'; end if;
@@ -228,11 +249,20 @@ begin
     raise exception 'このルームの参加者ではありません';
   end if;
 
+  if p_action='guess' and s->>'phase'='reveal' and coalesce(s->'timedOutPlayerIds','[]'::jsonb) ? p_player_id then
+    return public.spectrum_v6_get_impl(room,p_player_id);
+  end if;
   if p_action='settings' then
     if s->>'hostId' <> p_player_id then raise exception 'ホストだけが変更できます'; end if;
     if s->>'phase' <> 'lobby' then raise exception '待機室で変更してください'; end if;
-    if coalesce(p_payload->>'roundsPerPlayer','') !~ '^[1-3]$' then raise exception '回数は1〜3回です'; end if;
-    s := jsonb_set(s,'{roundsPerPlayer}',to_jsonb((p_payload->>'roundsPerPlayer')::integer),true);
+    if p_payload ? 'roundsPerPlayer' then
+      if coalesce(p_payload->>'roundsPerPlayer','') !~ '^[1-3]$' then raise exception '回数は1〜3回です'; end if;
+      s:=jsonb_set(s,'{roundsPerPlayer}',to_jsonb((p_payload->>'roundsPerPlayer')::integer),true);
+    end if;
+    if p_payload ? 'answerSeconds' then
+      if coalesce(p_payload->>'answerSeconds','') not in ('0','30','60') then raise exception '回答時間はなし・30秒・60秒です'; end if;
+      s:=jsonb_set(s,'{answerSeconds}',to_jsonb((p_payload->>'answerSeconds')::integer),true);
+    end if;
   elsif p_action='start' then
     if s->>'hostId' <> p_player_id then raise exception 'ホストだけが開始できます'; end if;
     if s->>'phase' <> 'lobby' then raise exception 'ゲームはすでに始まっています'; end if;
@@ -249,6 +279,8 @@ begin
       cross join jsonb_array_elements(ps) with ordinality as members(value,ord);
     next_id := schedule->>0;
     s := jsonb_set(s,'{rulesVersion}',to_jsonb(3),true);
+    s := jsonb_set(s,'{awardsEnabled}','true'::jsonb,true);
+    s := jsonb_set(s,'{matchStats}','{}'::jsonb,true);
     s := jsonb_set(s,'{matchId}',to_jsonb(now()::text),true);
     s := jsonb_set(s,'{clueSchedule}',schedule,true);
     s := jsonb_set(s,'{totalRounds}',to_jsonb(jsonb_array_length(schedule)),true);
@@ -263,6 +295,7 @@ begin
     update public.spectrum_room_secrets set target=floor(random()*71)::integer+15,target_player_id=next_id where room_code=room;
     s := jsonb_set(s,'{players}',ps);
     s := jsonb_set(s,'{phase}',to_jsonb('clue'::text));
+    s := s - 'answerDeadline' - 'timedOutPlayerIds';
     s := jsonb_set(s,'{prompt}',coalesce(p_payload->'prompt',jsonb_build_object('left','冷たい','right','熱い')));
     s := jsonb_set(s,'{promptHistory}',jsonb_build_array(s->'prompt'),true);
   elsif p_action='clue' then
@@ -273,6 +306,9 @@ begin
     s := jsonb_set(s,'{lastRoundResults}','[]'::jsonb,true);
     s := jsonb_set(s,'{hintPoints}',to_jsonb(0),true);
     s := jsonb_set(s,'{phase}',to_jsonb('guess'::text));
+    s := jsonb_set(s,'{timedOutPlayerIds}','[]'::jsonb,true);
+    s := jsonb_set(s,'{answerDeadline}',case when coalesce((s->>'answerSeconds')::integer,0)>0
+      then to_jsonb(extract(epoch from clock_timestamp())*1000+(s->>'answerSeconds')::integer*1000) else 'null'::jsonb end,true);
   elsif p_action='guess' then
     if s->>'phase' <> 'guess' then raise exception '今は予想できません'; end if;
     if s->>'cluePlayerId' = p_player_id then raise exception 'ヒント役は予想できません'; end if;
@@ -294,20 +330,29 @@ begin
     if s->'targetRevealed' is distinct from 'null'::jsonb then raise exception '答えは公開済みです'; end if;
     select target,target_player_id into sec from public.spectrum_room_secrets where room_code=room;
     new_players := '[]'::jsonb;
+    stats := coalesce(s->'matchStats','{}'::jsonb);
     for item in select value from jsonb_array_elements(s->'players') loop
       if item->>'id' <> s->>'cluePlayerId' then
         select guess into g from public.spectrum_player_guesses
           where room_code=room and round_number=(s->>'round')::integer and player_id=item->>'id';
-        if not found then raise exception '一部の回答がありません'; end if;
-        dist := abs(sec.target - g);
+        missed := not found;
+        if missed and not (coalesce(s->'timedOutPlayerIds','[]'::jsonb) ? (item->>'id')) then raise exception '一部の回答がありません'; end if;
+        dist := case when missed then null else abs(sec.target - g) end;
         -- Keep the scoring rule frozen for matches already in progress.
         pts := case when coalesce((s->>'rulesVersion')::integer,2)>=3
           then greatest(0,10-((dist+1)/2))
           else case when dist=0 then 5 when dist<=2 then 4 when dist<=4 then 3 when dist<=6 then 2 when dist<=8 then 1 else 0 end end;
+        if missed then pts:=0; g:=null; end if;
+        st:=coalesce(stats->(item->>'id'),'{}'::jsonb);
+        st:=st||jsonb_build_object('guessRounds',coalesce((st->>'guessRounds')::integer,0)+1,
+          'answeredRounds',coalesce((st->>'answeredRounds')::integer,0)+case when missed then 0 else 1 end,
+          'totalDistance',coalesce((st->>'totalDistance')::integer,0)+coalesce(dist,0),
+          'exactHits',coalesce((st->>'exactHits')::integer,0)+case when dist=0 then 1 else 0 end);
+        stats:=jsonb_set(stats,array[item->>'id'],st,true);
         total_guess_points := total_guess_points + pts;
         guesser_count := guesser_count + 1;
         item := jsonb_set(item,'{score}',to_jsonb(coalesce((item->>'score')::integer,0)+pts));
-        results := results || jsonb_build_array(jsonb_build_object('playerId',item->>'id','guess',g,'distance',dist,'points',pts));
+        results := results || jsonb_build_array(jsonb_build_object('playerId',item->>'id','guess',g,'distance',dist,'points',pts,'timedOut',missed));
       end if;
       new_players := new_players || jsonb_build_array(item);
     end loop;
@@ -320,6 +365,11 @@ begin
       end if;
       ps := ps || jsonb_build_array(item);
     end loop;
+    st:=coalesce(stats->(s->>'cluePlayerId'),'{}'::jsonb);
+    st:=st||jsonb_build_object('hintRounds',coalesce((st->>'hintRounds')::integer,0)+1,
+      'hintPoints',coalesce((st->>'hintPoints')::integer,0)+hint_points);
+    stats:=jsonb_set(stats,array[s->>'cluePlayerId'],st,true);
+    s := jsonb_set(s,'{matchStats}',stats,true);
     s := jsonb_set(s,'{players}',ps);
     s := jsonb_set(s,'{hintPoints}',to_jsonb(hint_points),true);
     s := jsonb_set(s,'{lastRoundResults}',results,true);
@@ -344,6 +394,7 @@ begin
     s := jsonb_set(s,'{prompt}',coalesce(p_payload->'prompt',jsonb_build_object('left','冷たい','right','熱い')));
     s := jsonb_set(s,'{clue}',to_jsonb(''::text));
     s := jsonb_set(s,'{phase}',to_jsonb('lobby'::text));
+    s := s - 'answerDeadline' - 'timedOutPlayerIds' - 'matchStats' - 'awardsEnabled';
     s := s - 'totalRounds' - 'clueSchedule';
     s := jsonb_set(s,'{promptHistory}','[]'::jsonb,true);
     s := jsonb_set(s,'{answeredPlayerIds}','[]'::jsonb,true);
@@ -374,6 +425,7 @@ begin
     s := jsonb_set(s,'{promptHistory}',coalesce(s->'promptHistory','[]'::jsonb) || jsonb_build_array(s->'prompt'),true);
     s := jsonb_set(s,'{clue}',to_jsonb(''::text));
     s := jsonb_set(s,'{phase}',to_jsonb('clue'::text));
+    s := s - 'answerDeadline' - 'timedOutPlayerIds';
     s := jsonb_set(s,'{answeredPlayerIds}','[]'::jsonb,true);
     s := jsonb_set(s,'{lastRoundResults}','[]'::jsonb,true);
     s := jsonb_set(s,'{hintPoints}',to_jsonb(0),true);
@@ -382,12 +434,13 @@ begin
     raise exception '不明な操作です';
   end if;
 
+  s := jsonb_set(s,'{featuresVersion}',to_jsonb(1),true);
   s := jsonb_set(s,'{updatedAt}',to_jsonb(now()));
   update public.spectrum_rooms set public_state=s,updated_at=now() where room_code=room;
   if s->>'cluePlayerId'=p_player_id and s->>'phase'='clue' then
     select target into t from public.spectrum_room_secrets where room_code=room;
   end if;
-  return jsonb_build_object('state',s,'target',t,'ownGuess',own_answer);
+  return jsonb_build_object('serverNow',extract(epoch from clock_timestamp())*1000,'state',s,'target',t,'ownGuess',own_answer);
 end $$;
 
 create or replace function public.spectrum_v6_leave_impl(p_room_code text, p_player_id text)
@@ -436,6 +489,7 @@ begin
     -- A match requires >=2 players. Pause by returning to the lobby and reset
     -- the incomplete match; scores are retained until host starts again.
     s := jsonb_set(s,'{phase}',to_jsonb('lobby'::text));
+    s := s - 'answerDeadline' - 'timedOutPlayerIds' - 'matchStats' - 'awardsEnabled';
     s := jsonb_set(s,'{cluePlayerId}',to_jsonb(new_host));
     s := jsonb_set(s,'{round}',to_jsonb(1));
     s := jsonb_set(s,'{clue}',to_jsonb(''::text));
@@ -451,6 +505,7 @@ begin
     new_clue := coalesce(s->'clueSchedule'->>((s->>'round')::integer-1),new_host);
     s := jsonb_set(s,'{cluePlayerId}',to_jsonb(new_clue));
     s := jsonb_set(s,'{phase}',to_jsonb('clue'::text));
+    s := s - 'answerDeadline' - 'timedOutPlayerIds';
     s := jsonb_set(s,'{clue}',to_jsonb(''::text));
     s := jsonb_set(s,'{answeredPlayerIds}','[]'::jsonb);
     s := jsonb_set(s,'{lastRoundResults}','[]'::jsonb);
@@ -650,4 +705,5 @@ grant execute on function public.spectrum_create_room(text,text,text,jsonb,integ
  public.spectrum_join_room(text,text,text),public.spectrum_get_room(text,text),
  public.spectrum_game_action(text,text,text,jsonb),public.spectrum_leave_room(text,text) to authenticated;
 
+update public.spectrum_rooms set public_state=jsonb_set(public_state,'{featuresVersion}',to_jsonb(1),true) where security_version=6;
 COMMIT;

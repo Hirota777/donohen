@@ -124,3 +124,28 @@ button:focus-visible,summary:focus-visible{outline:3px solid #7256cb;outline-off
 @media(prefers-reduced-motion:reduce){.reveal-entry,.reveal-points{animation:none}.progressbar i{transition:none}}
 @media(max-width:760px){.top{height:62px}.landing{padding:18px 0 40px;gap:36px}.hero .tagline{margin:16px 0 12px}.hero>p{font-size:13px}.hero .spectrum{max-width:290px;margin-top:22px}.gamehead h1{font-size:25px}.gamehead .textbtn{font-size:11px}.invite b{font-size:32px}.prompt{padding:18px}.restore-placeholder{grid-template-columns:1fr}.skeleton{height:220px}.skeleton+ .skeleton{display:none}.clue-text{font-size:21px!important}}
 
+.share-link{margin-top:14px}
+.prediction-scale{padding:12px 10px 20px;margin-bottom:12px}
+.scale-heading{display:flex;justify-content:space-between;gap:12px;color:#68738a;font-size:12px;margin-bottom:14px}
+.scale-heading strong{color:#26335b;font-size:15px}
+.scale-ruler{height:10px;border-radius:9px;background:linear-gradient(90deg,#2eb6ff,#30d1b4,#ffcb3e,#ff668e);position:relative;margin-bottom:24px}
+.scale-ruler>i{position:absolute;top:50%;transform:translate(-50%,-50%);height:21px;width:5px;border-radius:4px;background:#26335b;box-shadow:0 0 0 2px #fff}
+.prediction-lane{margin-top:17px;animation:score-enter 1s ease both}
+.prediction-lane>div:first-child{display:flex;justify-content:space-between;gap:12px;font-size:12px;margin-bottom:10px;overflow-wrap:anywhere}
+.prediction-lane b{color:#e45181;font-variant-numeric:tabular-nums;flex-shrink:0}
+.lane-track{height:4px;background:#e9edf5;position:relative;border-radius:4px}
+.lane-target{position:absolute;left:0;top:-4px;height:12px;width:2px;background:#26335b;transform:translateX(-50%)}
+.lane-guess{position:absolute;top:50%;height:13px;width:13px;border:2px solid #fff;border-radius:50%;background:#f56694;box-shadow:0 1px 5px #e4518140;transform:translate(-50%,-50%)}
+.hint-award{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:16px;margin-top:18px;border-radius:12px;background:#f0f4fc;color:#344466;font-size:13px;overflow-wrap:anywhere}
+.hint-award small{display:block;font-size:11px;color:#68738a;margin-top:5px}
+.hint-award>b{font-size:21px;white-space:nowrap}
+.answer-clock{text-align:center;font-size:12px!important;color:#68738a!important;margin:14px 0!important;font-variant-numeric:tabular-nums}
+.answer-clock strong{font-size:28px;color:#344466}
+.answer-clock.urgent strong{color:#dc4b73}
+.match-awards{display:grid;gap:10px;margin:26px 0}
+.match-awards h3{font-size:15px;margin:0 0 4px}
+.award-card{padding:18px;background:linear-gradient(120deg,#fff7dd,#fff0f5);border:1px solid #f4e4c5;border-radius:14px;display:grid;gap:8px;overflow-wrap:anywhere}
+.award-card>span{font-size:12px;color:#966918;font-weight:700}
+.award-card strong{font-size:18px;color:#344466}
+.award-card small{font-size:11px;color:#68738a}
+@media(prefers-reduced-motion:reduce){.prediction-lane{animation:none}}
