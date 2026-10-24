@@ -1,6 +1,11 @@
 -- ドノヘン？ v7.1: exact match = 15 points. Other distances unchanged.
 BEGIN;
 do $$ begin
+ if exists(select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='spectrum_game_action' and pg_get_functiondef(p.oid) like '%''finish''%') then
+  raise exception 'v9環境では旧更新SQLを実行しないでください。update_v9_results.sqlを使用してください。';
+ end if;
+end $$;
+do $$ begin
  if to_regprocedure('public.spectrum_expire_round(text)') is null then
   raise exception '先にv7更新SQLを適用してください。';
  end if;

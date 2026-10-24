@@ -167,7 +167,7 @@ begin
   s := jsonb_build_object(
     'room', p_room_code, 'hostId', p_player_id,
     'players', jsonb_build_array(jsonb_build_object('id',p_player_id,'name',trim(p_player_name),'score',0)),
-    'featuresVersion',1,'answerSeconds',0,'securityVersion',6,'rulesVersion',4,'roundsPerPlayer',1,'round',1,'cluePlayerId',p_player_id,'prompt',p_prompt,'promptHistory','[]'::jsonb,'clue','','phase','lobby',
+    'endFlowVersion',1,'featuresVersion',1,'answerSeconds',0,'securityVersion',6,'rulesVersion',4,'roundsPerPlayer',1,'round',1,'cluePlayerId',p_player_id,'prompt',p_prompt,'promptHistory','[]'::jsonb,'clue','','phase','lobby',
     'answeredPlayerIds','[]'::jsonb,'lastRoundResults','[]'::jsonb,'targetRevealed',null,'updatedAt',now()
   );
   insert into public.spectrum_rooms(room_code,public_state,security_version,creator_id,expires_at) values(p_room_code,s,6,auth.uid(),now()+interval '2 hours');
@@ -278,6 +278,7 @@ begin
       from generate_series(1,turns) as cycles(cycle)
       cross join jsonb_array_elements(ps) with ordinality as members(value,ord);
     next_id := schedule->>0;
+    s := jsonb_set(s,'{endFlowVersion}',to_jsonb(1),true);
     s := jsonb_set(s,'{rulesVersion}',to_jsonb(4),true);
     s := jsonb_set(s,'{awardsEnabled}','true'::jsonb,true);
     s := jsonb_set(s,'{matchStats}','{}'::jsonb,true);
@@ -382,9 +383,13 @@ begin
       'cluePlayerId',s->>'cluePlayerId','cluePlayerName',coalesce((select p->>'name' from jsonb_array_elements(s->'players') p where p->>'id'=s->>'cluePlayerId'),'ヒント役'),
       'target',sec.target,'hintPoints',hint_points,'results',(select jsonb_agg(r||jsonb_build_object('name',coalesce((select p->>'name' from jsonb_array_elements(s->'players') p where p->>'id'=r->>'playerId'),'プレイヤー'))) from jsonb_array_elements(results) r)
     )),true);
-    if (s->>'round')::integer >= coalesce((s->>'totalRounds')::integer,5) then
-      s := jsonb_set(s,'{phase}',to_jsonb('finished'::text));
+  elsif p_action='finish' then
+    if s->>'hostId'<>p_player_id then raise exception 'ホストだけが結果発表へ進めます'; end if;
+    if s->>'phase'<>'reveal' or s->'targetRevealed' is not distinct from 'null'::jsonb
+      or (s->>'round')::integer<coalesce((s->>'totalRounds')::integer,5) then
+      raise exception '最終ラウンドの答え合わせを終えてから進んでください';
     end if;
+    s := jsonb_set(s,'{phase}',to_jsonb('finished'::text));
   elsif p_action='restart' then
     if s->>'hostId' <> p_player_id then raise exception 'ホストだけが再スタートできます'; end if;
     if s->>'phase' <> 'finished' then raise exception '終了後に再スタートできます'; end if;
@@ -493,7 +498,9 @@ begin
     s := jsonb_set(s,'{totalRounds}',to_jsonb(jsonb_array_length(schedule)),true);
   end if;
 
-  if remaining < 2 and s->>'phase' not in ('lobby','finished') then
+  if remaining < 2 and s->>'phase' not in ('lobby','finished') and not (
+    s->>'phase'='reveal' and s->'targetRevealed' is distinct from 'null'::jsonb
+    and (s->>'round')::integer>=coalesce((s->>'totalRounds')::integer,5)) then
     -- A match requires >=2 players. Pause by returning to the lobby and reset
     -- the incomplete match; scores are retained until host starts again.
     s := jsonb_set(s,'{phase}',to_jsonb('lobby'::text));
@@ -526,10 +533,7 @@ begin
       if item #>> '{}' <> p_player_id then answered := answered || jsonb_build_array(item); end if;
     end loop;
     s := jsonb_set(s,'{answeredPlayerIds}',answered);
-    if s->>'phase'='reveal' and s->'targetRevealed' is distinct from 'null'::jsonb
-       and (s->>'round')::integer >= coalesce((s->>'totalRounds')::integer,5) then
-      s := jsonb_set(s,'{phase}',to_jsonb('finished'::text));
-    end if;
+
     if s->>'phase'='guess' and jsonb_array_length(answered)>=remaining-1 then
       s := jsonb_set(s,'{phase}',to_jsonb('reveal'::text));
     end if;
@@ -645,7 +649,7 @@ begin
   end if;
   begin
     perform public.spectrum_check_member(room,caller);
-    if p_action is null or p_action not in ('settings','start','clue','guess','reveal','restart','next_round')
+    if p_action is null or p_action not in ('settings','start','clue','guess','reveal','finish','restart','next_round')
       or p_payload is null or jsonb_typeof(p_payload)<>'object' or octet_length(p_payload::text)>2000 then
       raise exception '入力内容を確認してください。';
     end if;
@@ -714,4 +718,5 @@ grant execute on function public.spectrum_create_room(text,text,text,jsonb,integ
  public.spectrum_game_action(text,text,text,jsonb),public.spectrum_leave_room(text,text) to authenticated;
 
 update public.spectrum_rooms set public_state=jsonb_set(public_state,'{featuresVersion}',to_jsonb(1),true) where security_version=6;
+update public.spectrum_rooms set public_state=jsonb_set(public_state,'{endFlowVersion}',to_jsonb(1),true) where security_version=6;
 COMMIT;

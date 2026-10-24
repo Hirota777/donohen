@@ -38,7 +38,7 @@ begin
   s := jsonb_build_object(
     'room', p_room_code, 'hostId', p_player_id,
     'players', jsonb_build_array(jsonb_build_object('id',p_player_id,'name',trim(p_player_name),'score',0)),
-    'featuresVersion',1,'answerSeconds',0,'securityVersion',6,'rulesVersion',4,'roundsPerPlayer',1,'round',1,'cluePlayerId',p_player_id,'prompt',p_prompt,'promptHistory','[]'::jsonb,'clue','','phase','lobby',
+    'endFlowVersion',1,'featuresVersion',1,'answerSeconds',0,'securityVersion',6,'rulesVersion',4,'roundsPerPlayer',1,'round',1,'cluePlayerId',p_player_id,'prompt',p_prompt,'promptHistory','[]'::jsonb,'clue','','phase','lobby',
     'answeredPlayerIds','[]'::jsonb,'lastRoundResults','[]'::jsonb,'targetRevealed',null,'updatedAt',now()
   );
   insert into public.spectrum_rooms(room_code,public_state,security_version,creator_id,expires_at) values(p_room_code,s,6,auth.uid(),now()+interval '2 hours');
@@ -125,6 +125,7 @@ begin
       from generate_series(1,turns) as cycles(cycle)
       cross join jsonb_array_elements(ps) with ordinality as members(value,ord);
     next_id := schedule->>0;
+    s := jsonb_set(s,'{endFlowVersion}',to_jsonb(1),true);
     s := jsonb_set(s,'{rulesVersion}',to_jsonb(4),true);
     s := jsonb_set(s,'{awardsEnabled}','true'::jsonb,true);
     s := jsonb_set(s,'{matchStats}','{}'::jsonb,true);
@@ -229,9 +230,13 @@ begin
       'cluePlayerId',s->>'cluePlayerId','cluePlayerName',coalesce((select p->>'name' from jsonb_array_elements(s->'players') p where p->>'id'=s->>'cluePlayerId'),'ヒント役'),
       'target',sec.target,'hintPoints',hint_points,'results',(select jsonb_agg(r||jsonb_build_object('name',coalesce((select p->>'name' from jsonb_array_elements(s->'players') p where p->>'id'=r->>'playerId'),'プレイヤー'))) from jsonb_array_elements(results) r)
     )),true);
-    if (s->>'round')::integer >= coalesce((s->>'totalRounds')::integer,5) then
-      s := jsonb_set(s,'{phase}',to_jsonb('finished'::text));
+  elsif p_action='finish' then
+    if s->>'hostId'<>p_player_id then raise exception 'ホストだけが結果発表へ進めます'; end if;
+    if s->>'phase'<>'reveal' or s->'targetRevealed' is not distinct from 'null'::jsonb
+      or (s->>'round')::integer<coalesce((s->>'totalRounds')::integer,5) then
+      raise exception '最終ラウンドの答え合わせを終えてから進んでください';
     end if;
+    s := jsonb_set(s,'{phase}',to_jsonb('finished'::text));
   elsif p_action='restart' then
     if s->>'hostId' <> p_player_id then raise exception 'ホストだけが再スタートできます'; end if;
     if s->>'phase' <> 'finished' then raise exception '終了後に再スタートできます'; end if;
@@ -340,7 +345,9 @@ begin
     s := jsonb_set(s,'{totalRounds}',to_jsonb(jsonb_array_length(schedule)),true);
   end if;
 
-  if remaining < 2 and s->>'phase' not in ('lobby','finished') then
+  if remaining < 2 and s->>'phase' not in ('lobby','finished') and not (
+    s->>'phase'='reveal' and s->'targetRevealed' is distinct from 'null'::jsonb
+    and (s->>'round')::integer>=coalesce((s->>'totalRounds')::integer,5)) then
     -- A match requires >=2 players. Pause by returning to the lobby and reset
     -- the incomplete match; scores are retained until host starts again.
     s := jsonb_set(s,'{phase}',to_jsonb('lobby'::text));
@@ -373,10 +380,7 @@ begin
       if item #>> '{}' <> p_player_id then answered := answered || jsonb_build_array(item); end if;
     end loop;
     s := jsonb_set(s,'{answeredPlayerIds}',answered);
-    if s->>'phase'='reveal' and s->'targetRevealed' is distinct from 'null'::jsonb
-       and (s->>'round')::integer >= coalesce((s->>'totalRounds')::integer,5) then
-      s := jsonb_set(s,'{phase}',to_jsonb('finished'::text));
-    end if;
+
     if s->>'phase'='guess' and jsonb_array_length(answered)>=remaining-1 then
       s := jsonb_set(s,'{phase}',to_jsonb('reveal'::text));
     end if;
@@ -388,4 +392,39 @@ end $$;
 revoke all on function public.spectrum_expire_round(text),public.spectrum_v6_create_impl(text,text,text,jsonb,integer),
  public.spectrum_v6_get_impl(text,text),public.spectrum_v6_action_impl(text,text,text,jsonb),public.spectrum_v6_leave_impl(text,text) from public,anon,authenticated;
 update public.spectrum_rooms set public_state=jsonb_set(public_state,'{featuresVersion}',to_jsonb(1),true) where security_version=6;
+create or replace function public.spectrum_game_action(
+ p_room_code text,p_player_id text,p_action text,p_payload jsonb default '{}'::jsonb
+) returns jsonb language plpgsql security definer set search_path = pg_catalog,public
+as $$
+declare caller uuid; room text := upper(trim(p_room_code)); result jsonb;
+begin
+  caller := public.spectrum_check_identity(p_player_id);
+  if not public.spectrum_take_limit(caller::text,'action',60,60) then
+    return jsonb_build_object('error',jsonb_build_object('code','RATE_LIMIT','message','操作が続いています。少し待って試してください。'));
+  end if;
+  begin
+    perform public.spectrum_check_member(room,caller);
+    if p_action is null or p_action not in ('settings','start','clue','guess','reveal','finish','restart','next_round')
+      or p_payload is null or jsonb_typeof(p_payload)<>'object' or octet_length(p_payload::text)>2000 then
+      raise exception '入力内容を確認してください。';
+    end if;
+    if p_action in ('start','restart','next_round') and not public.spectrum_valid_prompt(p_payload->'prompt') then
+      raise exception 'お題の形式が正しくありません。画面を再読み込みしてください。';
+    end if;
+    if p_action='clue' and (jsonb_typeof(p_payload->'clue') is distinct from 'string'
+      or length(trim(p_payload->>'clue')) not between 1 and 100) then
+      raise exception 'ヒントは1〜100文字で入力してください。';
+    end if;
+    result := public.spectrum_v6_action_impl(room,p_player_id,p_action,p_payload);
+    update public.spectrum_rooms set expires_at=least(created_at+interval '24 hours',clock_timestamp()+case
+      when result->'state'->>'phase'='finished' then interval '30 minutes' else interval '2 hours' end)
+      where room_code=room;
+    return result;
+  exception when others then
+    return jsonb_build_object('error',jsonb_build_object('code',case when sqlstate='42501' then 'ROOM_UNAVAILABLE' else 'ACTION_FAILED' end,
+      'message',case when sqlstate in ('P0001','42501') then sqlerrm else 'うまくいきませんでした。もう一度試してください。' end));
+  end;
+end $$;
+revoke all on function public.spectrum_game_action(text,text,text,jsonb) from public,anon;
+grant execute on function public.spectrum_game_action(text,text,text,jsonb) to authenticated;
 COMMIT;
