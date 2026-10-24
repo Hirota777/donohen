@@ -3,6 +3,7 @@ import ScoreReveal from './ScoreReveal'
 import MatchReview, { type RoundReview } from './MatchReview'
 import ShareResult from './ShareResult'
 import SoundControls from './SoundControls'
+import PrepareHints, {type PreparedHint} from './PrepareHints'
 import {isNewClue,playClueSound,type HintMoment} from './sound'
 import { bestHintFor, publicGameUrl } from './shareImage'
 import { compatibilityAwards,differenceLabel, invitationCode, invitationUrl, matchAwards, type MatchStat } from './extras'
@@ -11,7 +12,7 @@ import { checkedRpc, db, ensureIdentity, errorMessage, GameApiError, makeRoomCod
 import { ArrowRight, Copy, Users } from 'lucide-react'
 
 type Prompt = { left: string; right: string }
-type Phase = 'lobby' | 'clue' | 'guess' | 'reveal' | 'finished'
+type Phase = 'lobby' | 'prepare' | 'clue' | 'guess' | 'reveal' | 'finished'
 type Player = { id: string; name: string; score: number }
 type RoundResult = { playerId: string; guess: number|null; distance: number|null; points: number; timedOut?:boolean }
 type PublicGame = {
@@ -19,6 +20,8 @@ type PublicGame = {
   hostId: string
   players: Player[]
   resultPlayers?: Player[]
+  hintBatchVersion?: number
+  preparedPlayerIds?: string[]
   round: number
   securityVersion?: number
   totalRounds?: number
@@ -44,7 +47,7 @@ type PublicGame = {
   targetRevealed: number | null
   updatedAt: string
 }
-type RpcResult = { state: PublicGame; target: number | null; ownGuess: number | null; serverNow?:number }
+type RpcResult = { state: PublicGame; target: number | null; ownGuess: number | null; serverNow?:number; preparedHints?:PreparedHint[] }
 const SESSION_KEY = 'donohen-session-v2'
 type SavedSession = { room: string; playerId: string; name: string }
 const saveSession = (data: SavedSession) => { try { localStorage.setItem(SESSION_KEY, JSON.stringify(data)) } catch { /* Play without restoration when storage is blocked. */ } }
@@ -57,6 +60,7 @@ export default function App() {
   const [game, setGame] = useState<PublicGame | null>(null)
   const [target, setTarget] = useState<number | null>(null)
   const [clueDraft, setClueDraft] = useState('')
+  const [preparedHints,setPreparedHints] = useState<PreparedHint[]>([])
   const [status, setStatus] = useState('')
   const [busy, setBusy] = useState(false)
   const [restoring, setRestoring] = useState(true)
@@ -97,6 +101,7 @@ export default function App() {
       if(typeof result.serverNow==='number')setClockOffset(result.serverNow-Date.now())
       setNow(Date.now())
       setGame(result.state)
+      setPreparedHints(result.state.phase==='prepare'?(result.preparedHints??[]):[])
       setTarget(typeof result.target === 'number' ? result.target : null)
       setOwnGuess(typeof result.ownGuess === 'number' ? result.ownGuess : null)
     }
@@ -235,7 +240,7 @@ export default function App() {
     if(!game||game.hostId!==playerId||game.phase!=='reveal'||!revealComplete)return
     await act('finish')
   }
-  const startGame = () => void act('start', { prompt: randomPrompt() })
+  const startGame = () => void act('start', { prompt: randomPrompt(), prepareHints:true })
   const setRounds = (value: number) => void act('settings', { roundsPerPlayer: value })
   const setAnswerSeconds = (value:number) => void act('settings',{answerSeconds:value})
   useEffect(()=>{
@@ -286,6 +291,7 @@ export default function App() {
     setBusy(true)
     try {
       await rpc('spectrum_leave_room', { p_room_code: game.room, p_player_id: playerId })
+      try{localStorage.removeItem(`donohen-hint-drafts:${game.room}:${game.matchId??''}:${playerId}`)}catch{/* Optional draft storage. */}
       clearSession(); setGame(null); setPlayerId(''); setTarget(null); setOwnGuess(null)
       setStatus(''); setConnectionLost(false)
     } catch (e) {
@@ -311,7 +317,7 @@ export default function App() {
         <label htmlFor="room-code">ルームコード</label>
         <div className="joinrow"><input id="room-code" className="room-code-input" value={joinCode} onChange={e=>setJoinCode(e.target.value)} inputMode="text" autoCapitalize="characters" autoCorrect="off" autoComplete="off" spellCheck={false} maxLength={8} placeholder="例：ABCD2345"/><button className="secondary" disabled={busy||!name.trim()||!joinCode.trim()} onClick={joinRoom}>参加する</button></div>
         {status&&<p className="status" role="alert">{status}</p>}
-        <details className="help"><summary>遊び方</summary><p>ヒント役だけが正解の数字を見て、言葉でヒントを出します。ほかの人は0〜100で予想。正解に近いほど高得点！ ヒント役は1人1〜3回。合計点で競います。</p></details>
+        <details className="help"><summary>遊び方</summary><p>最初に、自分のお題と正解の数字を見てヒントをまとめて考えます。全員が提出したら、ラウンドごとにヒントを公開。ほかの人は0〜100で予想します。正解に近いほど高得点！ ヒント役は1人1〜3回。合計点で競います。</p></details>
       </div>
     </section> : game.phase==='lobby' ? <section className="game">
       <div className="gamehead"><h1>待機室</h1><div className="score"><Users size={18}/>{game.players.length} / 12 人</div></div>
@@ -321,10 +327,14 @@ export default function App() {
         {game.players.map(p=><div className="scoreline" key={p.id}><span>{p.name}{p.id===playerId?'（あなた）':''}</span>{p.id===game.hostId&&<b>ホスト</b>}</div>)}
       </div><div className="panel gamepanel lobby-settings"><h2>ゲームの設定</h2>
         {configurable&&<fieldset className="round-settings"><legend>ヒント役は1人何回？</legend><div className="round-options">{[1,2,3].map(value=><button key={value} className={roundsPerPlayer===value?'selected':''} aria-pressed={roundsPerPlayer===value} disabled={busy||game.hostId!==playerId} onClick={()=>setRounds(value)}>{value}回</button>)}</div><p>{game.players.length}人 × {roundsPerPlayer}回 = 全{game.players.length*roundsPerPlayer}ラウンド</p></fieldset>}
-        {(game.featuresVersion??0)>=1&&<fieldset className="round-settings"><legend>回答時間</legend><div className="round-options">{[0,30,60].map(value=><button key={value} className={(game.answerSeconds??0)===value?'selected':''} aria-pressed={(game.answerSeconds??0)===value} disabled={busy||game.hostId!==playerId} onClick={()=>setAnswerSeconds(value)}>{value?`${value}秒`:'なし'}</button>)}</div><p>ヒントが出てから計測。時間切れの未回答は0点です。</p></fieldset>}
+        {(game.featuresVersion??0)>=1&&<fieldset className="round-settings"><legend>回答時間</legend><div className="round-options">{[0,30,60].map(value=><button key={value} className={(game.answerSeconds??0)===value?'selected':''} aria-pressed={(game.answerSeconds??0)===value} disabled={busy||game.hostId!==playerId} onClick={()=>setAnswerSeconds(value)}>{value?`${value}秒`:'なし'}</button>)}</div><p>各ラウンドのヒント公開から計測。時間切れの未回答は0点です。</p></fieldset>}
         {game.hostId===playerId?<><button className="primary full" disabled={busy||!allReady} onClick={startGame}>ゲームを始める <ArrowRight size={17}/></button>{!allReady&&<p className="quiet">あと1人で始められます</p>}</>:<p className="quiet">ホストが始めるのを待とう。</p>}
         {status&&<p className="status" role="alert">{status}</p>}
       </div></div>
+      <button className="back" disabled={busy} onClick={() => void leave()}>退出する</button>
+    </section> : game.phase==='prepare' ? <section className="game">
+      <div className="gamehead preparation-head"><h1>ヒントを準備</h1><div className="score"><Users size={18}/>{game.players.length}人 · 全{totalRounds}ラウンド</div></div>
+      <div className="panel gamepanel"><PrepareHints key={`${game.room}:${game.matchId}:${playerId}`} room={game.room} matchId={game.matchId??''} playerId={playerId} hints={preparedHints} players={game.players} readyIds={game.preparedPlayerIds??[]} busy={busy} onSubmit={hints=>act('prepare_clues',{hints})}/>{status&&<p className="status" role="alert">{status}</p>}</div>
       <button className="back" disabled={busy} onClick={() => void leave()}>退出する</button>
     </section> : <section className="game">
       <div className="gamehead"><h1>{displayPhase==='finished'?'結果発表':<>ラウンド <em>{game.round} / {totalRounds}</em></>}</h1></div>

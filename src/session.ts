@@ -18,7 +18,7 @@ export async function ensureIdentity(): Promise<string> {
   if (!identityRequest) identityRequest = (async () => {
     if (!protocolReady) protocolReady = (async () => {
       const {data,error} = await db!.rpc('spectrum_protocol')
-      if (error || data?.version !== 6 || data?.authRequired !== true) {
+      if (error || data?.version !== 6 || data?.authRequired !== true || data?.preparationVersion !== 1) {
         protocolReady = null
         throw new GameApiError('UPDATE_REQUIRED','現在更新中です。少し待ってから試してください。')
       }

@@ -4,7 +4,7 @@ select exists(select 1 from pg_publication_tables where pubname='supabase_realti
  and schemaname='public' and tablename='spectrum_rooms') as room_realtime_published;
 select role_name,table_name,has_table_privilege(role_name,'public.'||table_name,'SELECT') as can_select
 from (values('anon'),('authenticated')) roles(role_name)
-cross join (values('spectrum_rooms'),('spectrum_room_secrets'),('spectrum_player_guesses'),('spectrum_memberships'),('spectrum_request_limits'),('spectrum_result_shares')) tables(table_name);
+cross join (values('spectrum_rooms'),('spectrum_room_secrets'),('spectrum_player_guesses'),('spectrum_memberships'),('spectrum_request_limits'),('spectrum_result_shares'),('spectrum_prepared_hints')) tables(table_name);
 
 do $$
 declare f record; allowed_auth oid[] := array[

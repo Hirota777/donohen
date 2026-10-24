@@ -244,3 +244,17 @@ button:focus-visible,summary:focus-visible{outline:3px solid #7256cb;outline-off
 @keyframes perfect-spark{0%{opacity:0;transform:rotate(calc(var(--spark)*60deg)) translateY(-7px) scale(.5)}25%{opacity:1}100%{opacity:0;transform:rotate(calc(var(--spark)*60deg)) translateY(-43px) scale(.3)}}
 @media(prefers-reduced-motion:reduce){.perfect-badge,.perfect-sparkles i{animation:none}.perfect-sparkles{display:none}}
 @media(max-width:700px){.review-round-heading{gap:9px;padding:14px 12px}.share-dialog{padding:20px}.sound-popover{width:210px}}
+.preparation-intro h2{margin-top:0}.preparation-intro>p{margin-bottom:24px;max-width:640px}
+.preparation-head{flex-wrap:wrap;gap:12px}.preparation-head .score{font-size:13px;white-space:nowrap}
+.preparation-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:18px}
+.preparation-card{min-width:0;border:1px solid #e7e4f1;border-radius:18px;padding:20px;background:#fff}
+.preparation-card-heading{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:22px}
+.preparation-card-heading h3{margin:0;font-size:16px;color:#263655}.preparation-card-heading h3 small{font-size:12px;font-weight:500;color:#8a91a0}
+.preparation-card-heading>span{font-size:11px;color:#278969;background:#e8f7ee;border-radius:20px;padding:5px 9px}
+.preparation-card .poles{font-size:19px;min-height:64px}.preparation-card .secret{margin:20px 0 14px}
+.preparation-card textarea{box-sizing:border-box;width:100%;min-height:88px;resize:vertical;border:1px solid #ddddeb;border-radius:11px;padding:12px;font:inherit;font-size:14px;line-height:1.7;color:#263655;background:#fffdfa}
+.preparation-card textarea:focus{outline:2px solid #ff8fa9;outline-offset:2px}.preparation-card textarea:disabled{opacity:.6}
+.preparation-card .prepared-clue{font-size:17px;font-weight:700;color:#263655;line-height:1.8;overflow-wrap:anywhere;margin:18px 0 0;white-space:pre-wrap}
+.preparation-progress{border-top:1px solid #ece8f1;margin-top:26px;padding-top:20px}.preparation-progress>div:first-child{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.preparation-progress h3{font-size:15px;margin:0 0 12px}.preparation-progress strong{font-size:14px;color:#69758b}.hint-preparation>.primary{margin-top:22px}
+@media(max-width:700px){.preparation-cards{grid-template-columns:1fr}.preparation-card{padding:18px}.preparation-intro>p{margin-bottom:18px}}
