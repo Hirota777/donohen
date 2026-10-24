@@ -1,4 +1,20 @@
 export type MatchStat = { guessRounds?: number; answeredRounds?: number; totalDistance?: number; exactHits?: number; hintRounds?: number; hintPoints?: number }
+import type {RoundReview} from './MatchReview'
+export function compatibilityAwards(players:{id:string;name:string}[],rounds:RoundReview[],playerId:string){
+ const pairs=players.filter(p=>p.id!==playerId).map(p=>{let distance=0,count=0;
+  for(const round of rounds){
+   const own=round.cluePlayerId===playerId?round.target:round.results.find(r=>r.playerId===playerId)?.guess
+   const other=round.cluePlayerId===p.id?round.target:round.results.find(r=>r.playerId===p.id)?.guess
+   if(typeof own==='number'&&typeof other==='number'){distance+=Math.abs(own-other);count++}
+  }
+  return {...p,count,average:count?distance/count:0}
+ }).filter(p=>p.count>=2)
+ if(!pairs.length)return []
+ const closest=Math.min(...pairs.map(p=>p.average)),farthest=Math.max(...pairs.map(p=>p.average))
+ const awards=[{title:'波長がぴったり',kind:'close',partners:pairs.filter(p=>Math.abs(p.average-closest)<1e-9)}]
+ if(farthest>closest+1e-9)awards.push({title:'すれ違いも楽しい',kind:'different',partners:pairs.filter(p=>Math.abs(p.average-farthest)<1e-9)})
+ return awards
+}
 export function differenceLabel(guess: number|undefined,target:number):string {
   if(guess===undefined)return '未回答'
   const difference=guess-target

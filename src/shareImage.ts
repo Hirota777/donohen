@@ -1,42 +1,43 @@
+import type {RoundReview} from './MatchReview'
 export type SharedPlayer={id:string;name:string;score:number}
-export type SharedResult={players:SharedPlayer[];playerId:string;rounds:number;url:string}
-export type ShareMode='personal'|'all'
-export function publicGameUrl(href:string):string {const url=new URL(href);url.search='';url.hash='';return url.toString()}
+export type BestHint={round:number;prompt:{left:string;right:string};clue:string;target:number;average:number}
+export type SharedResult={players:SharedPlayer[];playerId:string;rounds:number;url:string;bestHint?:BestHint}
+export function publicGameUrl(href:string):string{const url=new URL(href);url.search='';url.hash='';return url.toString()}
 export function resultRank(players:SharedPlayer[],score:number):number{return players.filter(p=>p.score>score).length+1}
-export function resultText(result:SharedResult):string {
- const player=result.players.find(p=>p.id===result.playerId)
- return player?`ドノヘン？で遊びました！\n${player.name}：${resultRank(result.players,player.score)}位／${result.players.length}人・${player.score}点\nことばでつたえる、みんなのものさし。\n#ドノヘン`:'ドノヘン？で遊びました！\n#ドノヘン'
+export function bestHintFor(rounds:RoundReview[],playerId:string):BestHint|undefined{
+ const candidates=rounds.filter(r=>r.cluePlayerId===playerId&&r.results.length).map(r=>({round:r.round,prompt:r.prompt,clue:r.clue,target:r.target,average:r.results.reduce((sum,p)=>sum+p.points,0)/r.results.length})).sort((a,b)=>b.average-a.average||a.round-b.round)
+ const best=candidates[0];return best?{...best,average:Number(best.average.toFixed(1))}:undefined
 }
-function rounded(ctx:CanvasRenderingContext2D,x:number,y:number,w:number,h:number,r:number,color:string|CanvasGradient){
- ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();ctx.fillStyle=color;ctx.fill()
+export function resultText(result:SharedResult):string{
+ const p=result.players.find(p=>p.id===result.playerId)
+ return p?`ドノヘン？で遊びました！\n${p.name}：${resultRank(result.players,p.score)}位／${result.players.length}人・${p.score}点\n${result.bestHint?`ベストヒント「${Array.from(result.bestHint.clue).slice(0,45).join('')}${Array.from(result.bestHint.clue).length>45?'…':''}」平均${result.bestHint.average.toFixed(1)}点\n`:''}#ドノヘン`:'ドノヘン？で遊びました！\n#ドノヘン'
 }
-function fit(ctx:CanvasRenderingContext2D,text:string,max:number){let chars=Array.from(text);while(chars.length&&ctx.measureText(chars.join('')+(chars.length<Array.from(text).length?'…':'')).width>max)chars.pop();return chars.join('')+(chars.length<Array.from(text).length?'…':'')}
-export async function buildShareImage(result:SharedResult,mode:ShareMode):Promise<Blob>{
+export function socialShareUrl(service:'x'|'line',text:string,url:string):string{
+ const target=new URL(service==='x'?'https://x.com/intent/tweet':'https://line.me/R/share')
+ target.searchParams.set('text',service==='x'?text:`${text}\n${url}`)
+ if(service==='x')target.searchParams.set('url',url)
+ return target.toString()
+}
+export async function imageBase64(blob:Blob):Promise<string>{const bytes=new Uint8Array(await blob.arrayBuffer());let raw='';for(let i=0;i<bytes.length;i+=8192)raw+=String.fromCharCode(...bytes.subarray(i,i+8192));return btoa(raw)}
+function rounded(ctx:CanvasRenderingContext2D,x:number,y:number,w:number,h:number,r:number,color:string|CanvasGradient){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();ctx.fillStyle=color;ctx.fill()}
+function fit(ctx:CanvasRenderingContext2D,text:string,max:number){const original=Array.from(text),chars=[...original];while(chars.length&&ctx.measureText(chars.join('')+(chars.length<original.length?'…':'')).width>max)chars.pop();return chars.join('')+(chars.length<original.length?'…':'')}
+function lines(ctx:CanvasRenderingContext2D,text:string,max:number,count:number):string[]{const result:string[]=[];let current='';const characters=Array.from(text.replace(/[\r\n]+/g,' '));for(let i=0;i<characters.length;i++){const char=characters[i];if(ctx.measureText(current+char).width>max){result.push(current);current='';if(result.length===count-1){result.push(fit(ctx,characters.slice(i).join(''),max));return result}}current+=char}if(current)result.push(current);return result}
+export async function buildShareImage(result:SharedResult):Promise<Blob>{
  if(document.fonts)await document.fonts.ready
- const canvas=document.createElement('canvas');canvas.width=1080;canvas.height=mode==='all'?Math.max(1250,760+result.players.length*94):1350
- const ctx=canvas.getContext('2d');if(!ctx)throw Error('Image unavailable')
- const font='"Noto Sans JP",system-ui,sans-serif',width=canvas.width,height=canvas.height
- const bg=ctx.createLinearGradient(0,0,width,height);bg.addColorStop(0,'#e7f5ff');bg.addColorStop(.48,'#fff4f8');bg.addColorStop(1,'#fff2cc');ctx.fillStyle=bg;ctx.fillRect(0,0,width,height)
- ctx.globalAlpha=.45;ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(1080,0,520,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.arc(0,height,430,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1
- rounded(ctx,60,60,960,height-120,44,'#ffffffdc')
- ctx.textAlign='left';ctx.font=`900 85px ${font}`;['ド','ノ','ヘ','ン','？'].forEach((c,i)=>{ctx.fillStyle=['#f56998','#f3b532','#35b7e9','#32b89c','#bd86da'][i];ctx.fillText(c,112+i*91,180)})
- ctx.fillStyle='#788399';ctx.font=`600 20px ${font}`;ctx.fillText('ことばでつたえる、みんなのものさし。',120,230)
- const spectrum=ctx.createLinearGradient(120,0,960,0);['#34bdf3','#37cfa6','#f2cb48','#fa729a'].forEach((c,i)=>spectrum.addColorStop(i/3,c));rounded(ctx,120,270,840,12,6,spectrum)
- ctx.fillStyle='#788399';ctx.font=`700 21px ${font}`;ctx.fillText(mode==='all'?'FINAL RANKING':'MY RESULT',120,340)
- const sorted=[...result.players].sort((a,b)=>b.score-a.score||a.name.localeCompare(b.name,'ja'))
- if(mode==='all'){
-  ctx.fillStyle='#263655';ctx.font=`800 43px ${font}`;ctx.fillText('みんなの結果',120,405)
-  sorted.forEach((p,i)=>{const y=447+i*94;const rank=resultRank(sorted,p.score);rounded(ctx,106,y,868,80,17,rank===1?'#fff0ce':p.id===result.playerId?'#fff0f6':'#f4f6fb');ctx.fillStyle=rank===1?'#a97817':'#7b849b';ctx.font=`800 25px ${font}`;ctx.fillText(`${rank}`,132,y+51);ctx.fillStyle='#263655';ctx.font=`700 27px ${font}`;ctx.fillText(fit(ctx,p.name,560),193,y+51);ctx.textAlign='right';ctx.font=`800 31px ${font}`;ctx.fillStyle='#df5883';ctx.fillText(`${p.score}点`,942,y+51);ctx.textAlign='left'})
- }else{
-  const p=result.players.find(p=>p.id===result.playerId)??sorted[0];if(!p)throw Error('No results')
-  ctx.fillStyle='#263655';ctx.font=`800 47px ${font}`;ctx.fillText(fit(ctx,p.name,830),120,420)
-  ctx.fillStyle='#df5883';ctx.font=`900 155px ${font}`;ctx.fillText(`${resultRank(sorted,p.score)}位`,112,635)
-  ctx.fillStyle='#7a8499';ctx.font=`500 29px ${font}`;ctx.fillText(`${result.players.length}人で遊びました`,120,690)
-  rounded(ctx,112,750,856,210,27,'#f4f6fc');ctx.fillStyle='#7a8499';ctx.font=`700 24px ${font}`;ctx.fillText('TOTAL SCORE',150,803);ctx.fillStyle='#263655';ctx.font=`900 104px ${font}`;ctx.fillText(`${p.score}`,146,916);const scoreWidth=ctx.measureText(String(p.score)).width;ctx.font=`700 32px ${font}`;ctx.fillText('点',146+scoreWidth+18,916)
-  ctx.fillStyle='#7a8499';ctx.font=`600 25px ${font}`;ctx.fillText(`全${result.rounds}ラウンド、おつかれさま！`,120,1040)
- }
- ctx.fillStyle='#7a8499';ctx.font=`600 23px ${font}`;ctx.fillText(`${result.players.length} PLAYERS  /  ${result.rounds} ROUNDS`,120,height-205)
- ctx.fillStyle='#263655';ctx.font=`700 27px ${font}`;ctx.fillText('あなたも、どのへん？',120,height-155)
- ctx.fillStyle='#8d94a4';ctx.font=`500 19px ${font}`;ctx.fillText(fit(ctx,new URL(result.url).host,820),120,height-112)
+ const p=result.players.find(p=>p.id===result.playerId);if(!p)throw Error('No result')
+ const canvas=document.createElement('canvas');canvas.width=1200;canvas.height=630;const ctx=canvas.getContext('2d');if(!ctx)throw Error('Image unavailable')
+ const font='"Noto Sans JP",system-ui,sans-serif',bg=ctx.createLinearGradient(0,0,1200,630);bg.addColorStop(0,'#e3f4ff');bg.addColorStop(.5,'#fff0f6');bg.addColorStop(1,'#fff1c8');ctx.fillStyle=bg;ctx.fillRect(0,0,1200,630);rounded(ctx,28,28,1144,574,28,'#ffffffed')
+ ctx.textAlign='left';ctx.font=`900 64px ${font}`;['ド','ノ','ヘ','ン','？'].forEach((c,i)=>{ctx.fillStyle=['#f56998','#f3b532','#35b7e9','#32b89c','#bd86da'][i];ctx.fillText(c,66+i*69,118)})
+ ctx.font=`600 18px ${font}`;ctx.fillStyle='#788399';ctx.fillText('ことばでつたえる、みんなのものさし。',70,158)
+ const spectrum=ctx.createLinearGradient(70,0,1130,0);['#34bdf3','#37cfa6','#f2cb48','#fa729a'].forEach((c,i)=>spectrum.addColorStop(i/3,c));rounded(ctx,70,182,1060,8,4,spectrum)
+ ctx.fillStyle='#263655';ctx.font=`800 32px ${font}`;ctx.fillText(fit(ctx,p.name,320),70,258)
+ ctx.fillStyle='#df5883';ctx.font=`900 112px ${font}`;ctx.fillText(`${resultRank(result.players,p.score)}位`,64,390)
+ ctx.fillStyle='#263655';ctx.font=`800 60px ${font}`;ctx.fillText(`${p.score}`,70,480);const scoreWidth=ctx.measureText(String(p.score)).width;ctx.font=`700 23px ${font}`;ctx.fillText('点',84+scoreWidth,480)
+ ctx.fillStyle='#788399';ctx.font=`600 19px ${font}`;ctx.fillText(`${result.players.length}人・全${result.rounds}ラウンド`,70,530)
+ rounded(ctx,425,220,705,320,22,'#f5f5fc');ctx.fillStyle='#967336';ctx.font=`800 20px ${font}`;ctx.fillText('MY BEST HINT',452,260)
+ const best=result.bestHint
+ if(best){ctx.fillStyle='#68758f';ctx.font=`600 20px ${font}`;ctx.fillText(fit(ctx,`0 · ${best.prompt.left}`,285),452,305);ctx.textAlign='right';ctx.fillText(fit(ctx,`100 · ${best.prompt.right}`,285),1100,305);ctx.textAlign='left';ctx.fillStyle='#263655';ctx.font=`800 26px ${font}`;lines(ctx,`「${best.clue}」`,644,4).forEach((line,i)=>ctx.fillText(line,452,351+i*33));ctx.fillStyle='#df5883';ctx.font=`800 29px ${font}`;ctx.fillText(`みんなの平均 ${best.average.toFixed(1)} 点`,452,510);ctx.textAlign='right';ctx.font=`600 20px ${font}`;ctx.fillStyle='#68758f';ctx.fillText(`正解 ${best.target}`,1100,510);ctx.textAlign='left'}
+ else{ctx.fillStyle='#68758f';ctx.font=`600 24px ${font}`;ctx.fillText('ヒント役の記録はありません',452,355)}
+ ctx.fillStyle='#8c94a5';ctx.font=`500 17px ${font}`;ctx.fillText(fit(ctx,new URL(result.url).host,780),70,578);ctx.textAlign='right';ctx.fillStyle='#b45c80';ctx.font=`700 20px ${font}`;ctx.fillText('#ドノヘン',1130,578)
  return new Promise((resolve,reject)=>canvas.toBlob(blob=>blob?resolve(blob):reject(Error('Image unavailable')),'image/png'))
 }

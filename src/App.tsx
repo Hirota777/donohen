@@ -2,9 +2,11 @@ import { randomPrompt } from './prompts'
 import ScoreReveal from './ScoreReveal'
 import MatchReview, { type RoundReview } from './MatchReview'
 import ShareResult from './ShareResult'
-import { publicGameUrl } from './shareImage'
-import { differenceLabel, invitationCode, invitationUrl, matchAwards, type MatchStat } from './extras'
-import { useCallback, useEffect, useState } from 'react'
+import SoundControls from './SoundControls'
+import {isNewClue,playClueSound,type HintMoment} from './sound'
+import { bestHintFor, publicGameUrl } from './shareImage'
+import { compatibilityAwards,differenceLabel, invitationCode, invitationUrl, matchAwards, type MatchStat } from './extras'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { checkedRpc, db, ensureIdentity, errorMessage, GameApiError, makeRoomCode } from './session'
 import { ArrowRight, Copy, Radio, Users } from 'lucide-react'
 
@@ -67,6 +69,7 @@ export default function App() {
   const [completedReveal, setCompletedReveal] = useState('')
   const [resultTab,setResultTab] = useState<'ranking'|'review'>('ranking')
   const [openedFinal,setOpenedFinal] = useState('')
+  const previousSoundMoment=useRef<HintMoment|null>(null),notifiedHints=useRef(new Set<string>())
   const totalRounds = game?.totalRounds ?? 5
   const roundsPerPlayer = game?.roundsPerPlayer ?? 1
   const configurable = (game?.rulesVersion ?? 0) >= 2
@@ -88,6 +91,12 @@ export default function App() {
   const applyRpc = useCallback((data: unknown) => {
     const result = data as RpcResult
     if (result?.state) {
+      const next=result.state,key=`${next.room}:${next.matchId??''}:${next.round}:${next.cluePlayerId}:${next.clue}`
+      if(isNewClue(previousSoundMoment.current,next)&&!notifiedHints.current.has(key)){
+        notifiedHints.current.add(key);if(notifiedHints.current.size>100)notifiedHints.current.delete(notifiedHints.current.values().next().value!)
+        playClueSound()
+      }
+      previousSoundMoment.current=next
       if(typeof result.serverNow==='number')setClockOffset(result.serverNow-Date.now())
       setNow(Date.now())
       setGame(result.state)
@@ -259,6 +268,7 @@ export default function App() {
     cluePlayerName:game.players.find(p=>p.id===game.cluePlayerId)?.name??'ヒント役',target:game.targetRevealed,hintPoints:game.hintPoints??0,
     results:game.lastRoundResults.map(r=>({...r,name:game.players.find(p=>p.id===r.playerId)?.name??'プレイヤー'}))
   }]:[]
+  const connections=game?compatibilityAwards(game.players,reviewRounds,playerId):[]
   const roundRecord=game?.roundHistory?.find(r=>r.round===game.round)
   const hintName=roundRecord?.cluePlayerName??game?.players.find(p=>p.id===game.cluePlayerId)?.name??'ヒント役'
   const visibleTotal = (player: Player) => displayPhase==='reveal' && game?.targetRevealed!==null && !revealComplete
@@ -288,7 +298,7 @@ export default function App() {
   }
 
   return <main className="shell">
-    <header className="top"><a className="brand" aria-label="ドノヘン？"><span className="brandicon"><Radio size={20}/></span><span className="brandname"><span>ド</span><span>ノ</span><span>ヘ</span><span>ン</span><span>？</span></span></a></header>
+    <header className="top"><a className="brand" aria-label="ドノヘン？"><span className="brandicon"><Radio size={20}/></span><span className="brandname"><span>ド</span><span>ノ</span><span>ヘ</span><span>ン</span><span>？</span></span></a><SoundControls/></header>
     {game&&connectionLost&&<p className="connection-error" role="status">接続が途切れました。画面はそのままでお待ちください。</p>}
     {restoring ? <section className="restore-placeholder" aria-busy="true"><span className="sr-only" role="status">読み込み中</span><div className="skeleton"/><div className="skeleton"/></section> : !game ? <section className="landing">
       <div className="hero">
@@ -372,8 +382,8 @@ export default function App() {
           <div hidden={resultTab!=='ranking'}>
           <h2>ランキング</h2>
           <ScoreReveal key={revealKey} entries={standings.map(p=>({id:p.id,name:p.name,score:p.score}))} revealKey={revealKey} playerId={playerId} final onComplete={finishReveal}/>
-          {revealComplete&&awards.length>0&&<section className="match-awards" aria-label="今回の表彰"><h3>みんなの見せ場</h3>{awards.map(award=><div className="award-card" key={award.title}><span>{award.title}</span><strong>{award.names.join('・')}</strong><small>{award.detail}</small></div>)}</section>}
-          {revealComplete&&<ShareResult result={{players:standings,playerId,rounds:totalRounds,url:publicGameUrl(window.location.href)}}/>}
+          {revealComplete&&(awards.length>0||connections.length>0)&&<section className="match-awards" aria-label="今回の表彰"><h3>みんなの見せ場</h3>{awards.map(award=><div className="award-card" key={award.title}><span>{award.title}</span><strong>{award.names.join('・')}</strong><small>{award.detail}</small></div>)}{connections.map(award=><div className={`award-card compatibility-${award.kind}`} key={award.title}><span>{award.title}</span><small>{award.kind==='close'?'あなたと解釈が近かった人':'あなたと解釈の違いが大きかった人'}</small>{award.partners.map(p=><div className="compatibility-partner" key={p.id}><strong>{p.name}</strong><small>平均の差 {p.average.toFixed(1)} · 比較{p.count}回</small></div>)}</div>)}</section>}
+          {revealComplete&&<ShareResult room={game.room} result={{players:standings,playerId,rounds:totalRounds,url:publicGameUrl(window.location.href),bestHint:bestHintFor(reviewRounds,playerId)}}/>}
           </div>
           {revealComplete&&resultTab==='review'&&<MatchReview rounds={reviewRounds}/>}
           <div className="result-actions">{game.hostId===playerId?<button className="primary full" disabled={busy||!revealComplete} onClick={restart}>もう一度遊ぶ</button>:revealComplete&&<p className="quiet">ホストが次のゲームを始めるのを待とう。</p>}</div>
