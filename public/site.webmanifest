@@ -1,0 +1,24 @@
+{
+  "name": "ドノヘン？",
+  "short_name": "ドノヘン？",
+  "lang": "ja",
+  "start_url": "/",
+  "scope": "/",
+  "display": "browser",
+  "theme_color": "#fff8f3",
+  "background_color": "#fff2f6",
+  "icons": [
+    {
+      "src": "/icon-192.png?v=c1",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png?v=c1",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
