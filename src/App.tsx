@@ -1,7 +1,7 @@
 import { randomPrompt } from './prompts'
 import ScoreReveal from './ScoreReveal'
-import PredictionScale from './PredictionScale'
-import { invitationCode, invitationUrl, matchAwards, type MatchStat } from './extras'
+import MatchReview, { type RoundReview } from './MatchReview'
+import { differenceLabel, invitationCode, invitationUrl, matchAwards, type MatchStat } from './extras'
 import { useCallback, useEffect, useState } from 'react'
 import { checkedRpc, db, ensureIdentity, errorMessage, GameApiError, makeRoomCode } from './session'
 import { ArrowRight, Copy, Radio, Users } from 'lucide-react'
@@ -25,6 +25,7 @@ type PublicGame = {
   timedOutPlayerIds?: string[]
   awardsEnabled?: boolean
   matchStats?: Record<string,MatchStat>
+  roundHistory?: RoundReview[]
   matchId?: string
   cluePlayerId: string
   prompt: Prompt
@@ -61,6 +62,7 @@ export default function App() {
   const [clockOffset,setClockOffset] = useState(0)
   const [now,setNow] = useState(Date.now())
   const [completedReveal, setCompletedReveal] = useState('')
+  const [resultTab,setResultTab] = useState<'ranking'|'review'>('ranking')
   const totalRounds = game?.totalRounds ?? 5
   const roundsPerPlayer = game?.roundsPerPlayer ?? 1
   const configurable = (game?.rulesVersion ?? 0) >= 2
@@ -228,6 +230,7 @@ export default function App() {
   }, [game?.room, game?.round])
   useEffect(() => {
     if (game?.phase!=='reveal' && game?.phase!=='finished') setCompletedReveal('')
+    if(game?.phase!=='finished')setResultTab('ranking')
   }, [game?.room, game?.phase])
   useEffect(() => {
     if (!copied&&!linkCopied) return
@@ -235,8 +238,13 @@ export default function App() {
     return () => window.clearTimeout(timer)
   }, [copied,linkCopied])
   const standings = game ? [...game.players].sort((a,b) => b.score-a.score || a.name.localeCompare(b.name,'ja')) : []
-  const roundEntries = game ? (game.lastRoundResults ?? []).map(r => ({id:r.playerId, name:game.players.find(p=>p.id===r.playerId)?.name ?? 'プレイヤー', score:r.points, guess:r.guess??undefined, detail:r.timedOut?'時間切れ · 未回答':`差 ${r.distance}`})) : []
+  const roundEntries = game ? (game.lastRoundResults ?? []).map(r => ({id:r.playerId, name:game.players.find(p=>p.id===r.playerId)?.name ?? 'プレイヤー', score:r.points, guess:r.guess??undefined, detail:r.timedOut?'時間切れ · 未回答':differenceLabel(r.guess??undefined,game.targetRevealed??0)})) : []
   const awards=game?.awardsEnabled?matchAwards(game.players,game.matchStats??{}):[]
+  const reviewRounds:RoundReview[]=game?.roundHistory?.length?game.roundHistory:game?.phase==='finished'&&game.targetRevealed!==null?[{
+    round:game.round,prompt:game.prompt,clue:game.clue,cluePlayerId:game.cluePlayerId,
+    cluePlayerName:game.players.find(p=>p.id===game.cluePlayerId)?.name??'ヒント役',target:game.targetRevealed,hintPoints:game.hintPoints??0,
+    results:game.lastRoundResults.map(r=>({...r,name:game.players.find(p=>p.id===r.playerId)?.name??'プレイヤー'}))
+  }]:[]
   const visibleTotal = (player: Player) => game?.phase==='reveal' && game.targetRevealed!==null && !revealComplete
     ? player.score - (player.id===game.cluePlayerId?(game.hintPoints??0):(roundEntries.find(e=>e.id===player.id)?.score ?? 0)) : player.score
   const copy = async () => {
@@ -285,19 +293,22 @@ export default function App() {
       </div>
     </section> : game.phase==='lobby' ? <section className="game">
       <div className="gamehead"><h1>待機室</h1><div className="score"><Users size={18}/>{game.players.length} / 12 人</div></div>
-      <div className="panel gamepanel">
-        <div className="invite"><span>ルームコード</span><div><b>{game.room}</b><button className="textbtn" onClick={copy}><Copy size={15}/>{copied ? 'コピーしました' : 'コピー'}</button></div><button className="secondary share-link" onClick={()=>void copyLink()}><Copy size={15}/>{linkCopied?'リンクをコピーしました':'招待リンクをコピー'}</button><p>リンクを開いた友達は、ニックネームだけで参加できます。</p></div>
+      <div className="lobby-layout"><div className="panel gamepanel lobby-main">
+        <div className="invite"><span>ルームコード</span><div><b>{game.room}</b><button className="textbtn" onClick={copy}><Copy size={15}/>{copied ? 'コピーしました' : 'コピー'}</button></div><button className="secondary share-link" onClick={()=>void copyLink()}><Copy size={15}/>{linkCopied?'リンクをコピーしました':'招待リンクをコピー'}</button><p>リンクを友達に送って招待しよう。</p></div>
         <h2 className="member-heading">メンバー</h2>
         {game.players.map(p=><div className="scoreline" key={p.id}><span>{p.name}{p.id===playerId?'（あなた）':''}</span>{p.id===game.hostId&&<b>ホスト</b>}</div>)}
+      </div><div className="panel gamepanel lobby-settings"><h2>ゲームの設定</h2>
         {configurable&&<fieldset className="round-settings"><legend>ヒント役は1人何回？</legend><div className="round-options">{[1,2,3].map(value=><button key={value} className={roundsPerPlayer===value?'selected':''} aria-pressed={roundsPerPlayer===value} disabled={busy||game.hostId!==playerId} onClick={()=>setRounds(value)}>{value}回</button>)}</div><p>{game.players.length}人 × {roundsPerPlayer}回 = 全{game.players.length*roundsPerPlayer}ラウンド</p></fieldset>}
         {(game.featuresVersion??0)>=1&&<fieldset className="round-settings"><legend>回答時間</legend><div className="round-options">{[0,30,60].map(value=><button key={value} className={(game.answerSeconds??0)===value?'selected':''} aria-pressed={(game.answerSeconds??0)===value} disabled={busy||game.hostId!==playerId} onClick={()=>setAnswerSeconds(value)}>{value?`${value}秒`:'なし'}</button>)}</div><p>ヒントが出てから計測。時間切れの未回答は0点です。</p></fieldset>}
         {game.hostId===playerId?<><button className="primary full" disabled={busy||!allReady} onClick={startGame}>ゲームを始める <ArrowRight size={17}/></button>{!allReady&&<p className="quiet">あと1人で始められます</p>}</>:<p className="quiet">ホストが始めるのを待とう。</p>}
         {status&&<p className="status" role="alert">{status}</p>}
-      </div>
+      </div></div>
       <button className="back" disabled={busy} onClick={() => void leave()}>退出する</button>
     </section> : <section className="game">
       <div className="gamehead"><div><div className="eyebrow">ルーム {game.room}</div><h1>{game.phase==='finished'?'結果発表':<>ラウンド <em>{game.round} / {totalRounds}</em></>}</h1></div><button className="textbtn" onClick={copy}><Copy size={15}/>{copied ? 'コピーしました' : 'コードをコピー'}</button></div>
-      {game.phase!=='finished'&&<><div className="players-strip">{game.players.map(p=><span className={`chip ${p.id===game.cluePlayerId?'active':''}`} key={p.id}>{p.name}{p.id===game.cluePlayerId?' · ヒント役':''}<b>{visibleTotal(p)}点</b></span>)}</div>
+      {game.phase!=='finished'&&<><div className="round-context"><span>{game.phase==='clue'?'ヒントを考える':game.phase==='guess'?'位置を予想する':'答え合わせ'}</span><span>ヒント役 · {game.players.find(p=>p.id===game.cluePlayerId)?.name}</span></div>
+      <div className="match-progress" role="progressbar" aria-label="ラウンドの進行" aria-valuenow={game.round} aria-valuemin={0} aria-valuemax={totalRounds}><i style={{width:`${Math.min(100,game.round/totalRounds*100)}%`}}/></div>
+      <details className="player-overview"><summary>メンバーと合計点 <span>{game.players.length}人</span></summary><div className="players-strip">{game.players.map(p=><span className={`chip ${p.id===game.cluePlayerId?'active':''}`} key={p.id}>{p.name}{p.id===game.cluePlayerId?' · ヒント役':''}<b>{visibleTotal(p)}点</b></span>)}</div></details>
       <div className="prompt"><div className="poles"><span><small>0</small>{game.prompt.left}</span><b aria-hidden="true">↔</b><span><small>100</small>{game.prompt.right}</span></div></div></>}
       <div className="panel gamepanel">
         {game.phase==='clue'&&<>
@@ -332,18 +343,21 @@ export default function App() {
           {game.targetRevealed!==null&&<>
             <ScoreReveal key={revealKey} entries={roundEntries} revealKey={revealKey} playerId={playerId} target={game.targetRevealed} onComplete={finishReveal}/>
             {revealComplete&&<div className="hint-award"><span>ヒント役 · {game.players.find(p=>p.id===game.cluePlayerId)?.name}<small>みんなの平均点</small></span><b>+{game.hintPoints??0} 点</b></div>}
-            {revealComplete&&<><h3>合計</h3>{standings.map(p=><div className="scoreline" key={p.id}><span>{p.name}{p.id===playerId?'（あなた）':''}</span><b>{p.score} 点</b></div>)}</>}
+            {revealComplete&&<details className="total-overview"><summary>合計点を見る</summary>{standings.map(p=><div className="scoreline" key={p.id}><span>{p.name}{p.id===playerId?'（あなた）':''}</span><b>{p.score} 点</b></div>)}</details>}
             <details className="help"><summary>得点のつけ方</summary><p>{(game.rulesVersion??0)>=3?`ぴったりなら${(game.rulesVersion??0)>=4?15:10}点。差が1〜2で9点、3〜4で8点、5〜6で7点、7〜8で6点、9〜10で5点、11〜12で4点、13〜14で3点、15〜16で2点、17〜18で1点。19以上は0点。`:configurable?'ぴったりなら5点。差が2以内で4点、4以内で3点、6以内で2点、8以内で1点。':'ぴったりなら5点。差が3以内で4点、7以内で3点、12以内で2点、20以内で1点。'}ヒント役はみんなの平均点（四捨五入）をもらえます。</p></details>
           </>}
           {game.targetRevealed===null&&game.hostId===playerId&&<button className="primary full" disabled={busy} onClick={reveal}>答えを見る</button>}
           {game.targetRevealed!==null&&game.round<totalRounds&&game.hostId===playerId&&<button className="primary full" disabled={busy||!revealComplete} onClick={nextRound}>次のラウンド <ArrowRight size={17}/></button>}
         </>}
         {game.phase==='finished'&&<div className="final-results">
+          <nav className="result-tabs" aria-label="結果の表示"><button className={resultTab==='ranking'?'selected':''} aria-pressed={resultTab==='ranking'} onClick={()=>setResultTab('ranking')}>ランキング・表彰</button><button className={resultTab==='review'?'selected':''} aria-pressed={resultTab==='review'} disabled={!revealComplete} onClick={()=>setResultTab('review')}>振り返り</button></nav>
+          <div hidden={resultTab!=='ranking'}>
           <h2>ランキング</h2>
           <ScoreReveal key={revealKey} entries={standings.map(p=>({id:p.id,name:p.name,score:p.score}))} revealKey={revealKey} playerId={playerId} final onComplete={finishReveal}/>
           {revealComplete&&awards.length>0&&<section className="match-awards" aria-label="今回の表彰"><h3>みんなの見せ場</h3>{awards.map(award=><div className="award-card" key={award.title}><span>{award.title}</span><strong>{award.names.join('・')}</strong><small>{award.detail}</small></div>)}</section>}
-          {game.hostId===playerId?<button className="primary full" disabled={busy||!revealComplete} onClick={restart}>もう一度遊ぶ</button>:revealComplete&&<p className="quiet">ホストが次のゲームを始めるのを待とう。</p>}
-          {revealComplete&&<details className="help"><summary>最終ラウンドの答え合わせ</summary><p>0 · {game.prompt.left} ↔ 100 · {game.prompt.right}</p><p>「{game.clue}」</p>{game.targetRevealed!==null&&<PredictionScale entries={roundEntries} target={game.targetRevealed}/>} {roundEntries.map(r=><div className="scoreline" key={r.id}><span>{r.name}{r.guess!==undefined&&<span className="reveal-guess"><span>予想</span><strong>{r.guess}</strong></span>}<small>{r.detail}</small></span><b>+{r.score} 点</b></div>)}<div className="hint-award"><span>ヒント役 · {game.players.find(p=>p.id===game.cluePlayerId)?.name}<small>みんなの平均点</small></span><b>+{game.hintPoints??0} 点</b></div></details>}
+          </div>
+          {revealComplete&&resultTab==='review'&&<MatchReview rounds={reviewRounds}/>}
+          <div className="result-actions">{game.hostId===playerId?<button className="primary full" disabled={busy||!revealComplete} onClick={restart}>もう一度遊ぶ</button>:revealComplete&&<p className="quiet">ホストが次のゲームを始めるのを待とう。</p>}</div>
         </div>}
         {status&&<p className="status" role="alert">{status}</p>}
       </div>

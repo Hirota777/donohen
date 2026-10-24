@@ -149,3 +149,52 @@ button:focus-visible,summary:focus-visible{outline:3px solid #7256cb;outline-off
 .award-card strong{font-size:18px;color:#344466}
 .award-card small{font-size:11px;color:#68738a}
 @media(prefers-reduced-motion:reduce){.prediction-lane{animation:none}}
+/* Layout: invitation/settings, focused play, then results/review. */
+.lobby-layout{display:grid;grid-template-columns:1.05fr 1fr;gap:18px;align-items:start}
+.lobby-layout .gamepanel{min-width:0}
+.lobby-settings>h2{margin-top:0;font-size:18px}
+.lobby-main .invite>div{flex-wrap:wrap;gap:12px}
+.lobby-main .invite b{font-size:clamp(26px,3vw,34px);letter-spacing:2px}
+.lobby-main .share-link{width:100%}
+.round-context{display:flex;justify-content:space-between;gap:12px;color:#68738a;font-size:11px;margin:0 0 12px;overflow-wrap:anywhere}
+.round-context>span:first-child{font-weight:700;color:#d3557c;flex-shrink:0}
+.match-progress{height:4px;background:#e7eaf1;border-radius:6px;overflow:hidden;margin-bottom:18px}
+.match-progress i{display:block;height:100%;background:linear-gradient(90deg,#aa8af7,#ff7c9c);border-radius:6px}
+.player-overview{margin-bottom:16px;font-size:12px;color:#68738a}
+.player-overview summary,.total-overview summary{cursor:pointer;padding:10px 0;font-weight:700}
+.player-overview summary>span{float:right;font-weight:400}
+.player-overview .players-strip{margin:8px 0 0}
+.total-overview{margin-top:18px;border-top:1px solid #ece8f1;font-size:12px;color:#344466}
+.score-reveal:not(.final-reveal){display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px 20px;align-items:start}
+.score-reveal:not(.final-reveal)>.prediction-scale{grid-column:1;grid-row:1 / span 2;margin:0;padding-top:6px}
+.score-reveal:not(.final-reveal)>.reveal-list{grid-column:2;grid-row:1}
+.score-reveal:not(.final-reveal)>.reveal-skip{grid-column:2;grid-row:2;margin:6px auto}
+.prediction-value{display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:baseline;gap:4px 8px;text-align:right;max-width:70%}
+.prediction-value>b{font-size:18px;line-height:1.2}
+.prediction-value>small{font-size:11px;color:#68738a;white-space:nowrap}
+.prediction-value>.exact-difference{color:#287f66;font-weight:700}
+.prediction-value>strong{font-size:12px;white-space:nowrap;color:#344466}
+.result-tabs{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:5px;margin-bottom:24px;border-radius:13px;background:#f0f2f7}
+.result-tabs button{font-size:12px;font-weight:700;border-radius:9px;padding:12px 6px;background:transparent;color:#68738a}
+.result-tabs button.selected{background:#fff;box-shadow:0 2px 8px #26335b0a;color:#b4446b}
+.result-actions{border-top:1px solid #ece8f1;margin-top:24px;padding-top:8px}
+.section-heading{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:18px}
+.section-heading h2{margin:0;font-size:20px}
+.section-heading>span{font-size:11px;color:#68738a}
+.review-round{border:1px solid #e8e8f0;border-radius:14px;margin:12px 0;background:#fff;overflow:hidden}
+.review-round>summary{display:flex;align-items:center;gap:12px;padding:17px 15px;cursor:pointer;list-style:none}
+.review-round>summary::-webkit-details-marker{display:none}
+.round-number{font-size:12px;font-weight:800;color:#a088b9;flex-shrink:0}
+.review-summary{display:grid;gap:5px;flex:1;min-width:0;overflow-wrap:anywhere}
+.review-summary strong{font-size:14px;line-height:1.5;color:#344466}
+.review-summary small{font-size:11px;color:#68738a}
+.review-target{display:grid;gap:4px;text-align:center;color:#68738a;font-size:10px;flex-shrink:0}
+.review-target b{font-size:23px;color:#344466}
+.review-round>summary::after{content:'＋';font-size:16px;color:#a5aabd;flex-shrink:0}
+.review-round[open]>summary::after{content:'−'}
+.review-body{border-top:1px solid #ece8f1;padding:18px 14px}
+.review-poles{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:12px;align-items:center;text-align:center;font-size:15px;font-weight:700;color:#344466;margin-bottom:22px;overflow-wrap:anywhere}
+.review-poles small{display:block;font-size:10px;color:#8c94a5;font-weight:400;margin-bottom:6px}
+.review-body .hint-award{font-size:12px;margin-top:4px}
+.review-body .hint-award>b{font-size:18px}
+@media(max-width:700px){.lobby-layout{grid-template-columns:1fr}.score-reveal:not(.final-reveal){grid-template-columns:minmax(0,1fr);gap:10px}.score-reveal:not(.final-reveal)>.prediction-scale,.score-reveal:not(.final-reveal)>.reveal-list,.score-reveal:not(.final-reveal)>.reveal-skip{grid-column:1;grid-row:auto}.score-reveal:not(.final-reveal)>.prediction-scale{margin-bottom:12px}.review-round>summary{gap:9px;padding:14px 12px}.review-summary strong{font-size:13px}.prediction-value{max-width:72%}}

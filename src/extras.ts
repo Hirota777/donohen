@@ -1,4 +1,9 @@
 export type MatchStat = { guessRounds?: number; answeredRounds?: number; totalDistance?: number; exactHits?: number; hintRounds?: number; hintPoints?: number }
+export function differenceLabel(guess: number|undefined,target:number):string {
+  if(guess===undefined)return '未回答'
+  const difference=guess-target
+  return difference===0?'ぴったり':`正解より ${difference>0?'＋':'−'}${Math.abs(difference)}`
+}
 export function invitationCode(search: string): string {
   const value=(new URLSearchParams(search).get('room')??'').normalize('NFKC').trim().toUpperCase()
   return /^[A-Z2-9]{8}$/.test(value)?value:''

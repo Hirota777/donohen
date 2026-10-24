@@ -128,6 +128,7 @@ begin
     s := jsonb_set(s,'{rulesVersion}',to_jsonb(4),true);
     s := jsonb_set(s,'{awardsEnabled}','true'::jsonb,true);
     s := jsonb_set(s,'{matchStats}','{}'::jsonb,true);
+    s := jsonb_set(s,'{roundHistory}','[]'::jsonb,true);
     s := jsonb_set(s,'{matchId}',to_jsonb(now()::text),true);
     s := jsonb_set(s,'{clueSchedule}',schedule,true);
     s := jsonb_set(s,'{totalRounds}',to_jsonb(jsonb_array_length(schedule)),true);
@@ -222,6 +223,12 @@ begin
     s := jsonb_set(s,'{hintPoints}',to_jsonb(hint_points),true);
     s := jsonb_set(s,'{lastRoundResults}',results,true);
     s := jsonb_set(s,'{targetRevealed}',to_jsonb(sec.target));
+    -- Only append after the host's reveal, inside the same locked scoring transaction.
+    s := jsonb_set(s,'{roundHistory}',coalesce(s->'roundHistory','[]'::jsonb)||jsonb_build_array(jsonb_build_object(
+      'round',(s->>'round')::integer,'prompt',s->'prompt','clue',s->>'clue',
+      'cluePlayerId',s->>'cluePlayerId','cluePlayerName',coalesce((select p->>'name' from jsonb_array_elements(s->'players') p where p->>'id'=s->>'cluePlayerId'),'ヒント役'),
+      'target',sec.target,'hintPoints',hint_points,'results',(select jsonb_agg(r||jsonb_build_object('name',coalesce((select p->>'name' from jsonb_array_elements(s->'players') p where p->>'id'=r->>'playerId'),'プレイヤー'))) from jsonb_array_elements(results) r)
+    )),true);
     if (s->>'round')::integer >= coalesce((s->>'totalRounds')::integer,5) then
       s := jsonb_set(s,'{phase}',to_jsonb('finished'::text));
     end if;
@@ -242,7 +249,7 @@ begin
     s := jsonb_set(s,'{prompt}',coalesce(p_payload->'prompt',jsonb_build_object('left','冷たい','right','熱い')));
     s := jsonb_set(s,'{clue}',to_jsonb(''::text));
     s := jsonb_set(s,'{phase}',to_jsonb('lobby'::text));
-    s := s - 'answerDeadline' - 'timedOutPlayerIds' - 'matchStats' - 'awardsEnabled';
+    s := s - 'answerDeadline' - 'timedOutPlayerIds' - 'matchStats' - 'awardsEnabled' - 'roundHistory';
     s := s - 'totalRounds' - 'clueSchedule';
     s := jsonb_set(s,'{promptHistory}','[]'::jsonb,true);
     s := jsonb_set(s,'{answeredPlayerIds}','[]'::jsonb,true);
@@ -337,7 +344,7 @@ begin
     -- A match requires >=2 players. Pause by returning to the lobby and reset
     -- the incomplete match; scores are retained until host starts again.
     s := jsonb_set(s,'{phase}',to_jsonb('lobby'::text));
-    s := s - 'answerDeadline' - 'timedOutPlayerIds' - 'matchStats' - 'awardsEnabled';
+    s := s - 'answerDeadline' - 'timedOutPlayerIds' - 'matchStats' - 'awardsEnabled' - 'roundHistory';
     s := jsonb_set(s,'{cluePlayerId}',to_jsonb(new_host));
     s := jsonb_set(s,'{round}',to_jsonb(1));
     s := jsonb_set(s,'{clue}',to_jsonb(''::text));
